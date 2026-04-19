@@ -43,7 +43,7 @@ import torch
 from download_connectome import ensure_connectome
 from expansive_network import ExpansiveNetwork
 from fly_brain import FlyConnectomeBrain
-from fly_world import ACTIONS, FlyWorld
+from fly_world import ACTIONS, FlyWorld, FULL_SENSE_DIM
 from llm_reasoner import INTENTS, FrozenLLMReasoner
 
 
@@ -293,7 +293,7 @@ def run(
 
     motor_dim = int(fly_brain.motor_mask.sum().item())
     n_intents = len(INTENTS)
-    state_dim = motor_dim + 11 + n_intents
+    state_dim = motor_dim + FULL_SENSE_DIM + n_intents
     net = ExpansiveNetwork(
         input_size=state_dim, hidden_size=hidden, output_size=len(ACTIONS),
     ).to(device)

@@ -16,6 +16,13 @@ from collections import deque
 
 import numpy as np
 
+# Sensores fisicos (11) + canales sociales / lenguaje (4) inyectados por el
+# puente LLM: hostil~peligro, amable~refugio, conversacion~comida/atencion,
+# curiosidad~explorar / pregunta.
+PHYSICAL_SENSE_DIM = 11
+SOCIAL_CHANNELS = 4
+FULL_SENSE_DIM = PHYSICAL_SENSE_DIM + SOCIAL_CHANNELS
+
 ACTIONS = [
     "avanzar",
     "girar_izq",
@@ -102,6 +109,11 @@ class FlyWorld:
         self._prev_threat_dist = self._min_dist_to(self.threat)
         self._prev_safe_dist = self._min_dist_to(self.safe)
 
+        self.social_hostil = 0.0
+        self.social_amable = 0.0
+        self.social_conversacion = 0.0
+        self.social_curiosidad = 0.0
+
     def _spawn_points(self, n: int) -> np.ndarray:
         half = self.size / 2
         return self.rng.uniform(-half, half, size=(n, 3)).astype(np.float32)
@@ -137,12 +149,52 @@ class FlyWorld:
         t_d_norm = 1.0 - min(t_d / diag, 1.0)
         s_d_norm = 1.0 - min(s_d / diag, 1.0)
 
-        return np.concatenate([
+        f_d_norm = float(np.clip(f_d_norm + 0.38 * self.social_conversacion, 0.0, 1.0))
+        t_d_norm = float(np.clip(t_d_norm + 0.42 * self.social_hostil, 0.0, 1.0))
+        s_d_norm = float(np.clip(s_d_norm + 0.40 * self.social_amable, 0.0, 1.0))
+
+        phys = np.concatenate([
             [f_d_norm], f_dir,
             [t_d_norm], t_dir,
             [s_d_norm],
             [self.energy, self._boundary_proximity()],
         ]).astype(np.float32)
+        soc = np.array([
+            self.social_hostil,
+            self.social_amable,
+            self.social_conversacion,
+            self.social_curiosidad,
+        ], dtype=np.float32)
+        return np.concatenate([phys, soc])
+
+    def inject_language_stimulus(
+        self,
+        hostil: float,
+        amable: float,
+        conversacion: float,
+        curiosidad: float,
+        gain: float = 0.65,
+    ) -> None:
+        """El LLM (puente) traduce lenguaje humano a valencias para el cerebro."""
+        self.social_hostil = float(np.clip(self.social_hostil + hostil * gain, 0.0, 1.0))
+        self.social_amable = float(np.clip(self.social_amable + amable * gain, 0.0, 1.0))
+        self.social_conversacion = float(
+            np.clip(self.social_conversacion + conversacion * gain, 0.0, 1.0)
+        )
+        self.social_curiosidad = float(
+            np.clip(self.social_curiosidad + curiosidad * gain, 0.0, 1.0)
+        )
+
+    def decay_social_channels(self) -> None:
+        d = 0.982
+        for name in (
+            "social_hostil",
+            "social_amable",
+            "social_conversacion",
+            "social_curiosidad",
+        ):
+            v = getattr(self, name) * d
+            setattr(self, name, float(v) if v > 0.007 else 0.0)
 
     def _boundary_proximity(self) -> float:
         half = self.size / 2
@@ -250,6 +302,7 @@ class FlyWorld:
             reward -= 0.1
 
         self.trail.append(self.fly_pos.copy())
+        self.decay_social_channels()
         return float(reward)
 
     def _check_encounters(self) -> float:

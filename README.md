@@ -96,6 +96,28 @@ python stats_simulation.py --llm --llm-model gemma3:270m --llm-every 30
 Sin Ollama o sin el modelo instalado, el razonador cae en reglas heuristicas
 equivalentes (mismo interfaz).
 
+### Chat con el cerebro de la mosca (`chat_fly_app.py`)
+
+Interfaz grafica (Tkinter): **tu texto** pasa por el LLM solo como **puente**
+(JSON: hostil / amable / conversacion / curiosidad) y se inyecta en canales
+sociales del mundo. **La linea tipo "murmullo"** la arma el cerebro con
+plantillas a partir de tensores.
+
+**Preguntas aprendidas:** la red plastica es mas grande (`--hidden` por
+defecto 3200) y tiene dos cabezales extra: (1) una politica categorica sobre
+un **lexicon fijo de temas** (49 semillas en español — lo aprendible es *cual*
+tema se activa); (2) un **vector de instruccion** (28 numeros en tanh) que se
+pasa al LLM para que *articule* una pregunta corta alrededor de ese tema. El
+LLM **no inventa el tema**: lo elige la plasticidad. Cuando tu **siguiente**
+mensaje llega, el tono del puente produce una recompensa `R` y se aplica
+**REINFORCE** sobre la cabeza de preguntas (y el resto de pesos compartidos
+via `fc1`).
+
+```bash
+python chat_fly_app.py
+python chat_fly_app.py --hidden 4000 --llm-model gemma2:2b
+```
+
 ### Mas opciones
 
 ```bash
@@ -115,6 +137,10 @@ python experiment.py --synthetic             # forzar conectoma sintetico
 | `experiment.py`            | Bucle de refuerzo + graficas. |
 | `stats_simulation.py`      | Mundo simulado + dashboard terminal + opcion LLM interno. |
 | `llm_reasoner.py`          | LLM local (Ollama) o heuristica; intenciones abstractas. |
+| `chat_bridge.py`           | LLM clasifica texto → estímulos (no genera charla). |
+| `chat_sim_session.py`      | Bucle simulacion + aprendizaje para el chat. |
+| `chat_fly_app.py`          | Ventana de chat (Tkinter). |
+| `fly_voice.py`             | Frases del “cerebro” a partir de tensores (sin LLM). |
 | `data/`                    | CSV del conectoma. |
 | `results.png`              | Graficas generadas al final. |
 
