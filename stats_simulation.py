@@ -6,6 +6,9 @@ Arquitectura:
         |                                          ^
         | actividad motora                          | sensores
         v                                          |
+    RAZONAMIENTO INTERNO (LLM local, pesos CONGELADOS; solo inferencia)
+        |  intenciones abstractas (JSON) + sesgo fijo sobre logits
+        v
     CAPA PLASTICA (red en blanco, APRENDE por refuerzo)
         |
         v                ==>    MUNDO 3D FICTICIO (comida / peligro / seguro)
@@ -18,10 +21,12 @@ La mosca aprende sola a:
     - refugiarse en zonas seguras cuando tiene baja energia
 
 Uso:
-    python stats_simulation.py                        # por defecto
-    python stats_simulation.py --max-steps 10000      # mas tiempo
-    python stats_simulation.py --fly-neurons 5000     # mas biologia
-    python stats_simulation.py --refresh-every 20     # dashboard menos frecuente
+    python stats_simulation.py
+    python stats_simulation.py --llm --llm-model gemma3:270m --llm-every 30
+    python stats_simulation.py --max-steps 10000 --fly-neurons 5000
+
+Requisito LLM local: instalar Ollama y ejecutar p. ej.:
+    ollama pull gemma3:270m
 """
 from __future__ import annotations
 
@@ -39,6 +44,7 @@ from download_connectome import ensure_connectome
 from expansive_network import ExpansiveNetwork
 from fly_brain import FlyConnectomeBrain
 from fly_world import ACTIONS, FlyWorld
+from llm_reasoner import INTENTS, FrozenLLMReasoner
 
 
 if os.name == "nt":
@@ -133,6 +139,7 @@ def render_dashboard(
     safe_rate_hist: deque,
     last_action: int,
     temperature: float,
+    llm_panel: dict | None = None,
 ) -> str:
     rewards = list(reward_hist)
     r_inst = rewards[-1] if rewards else 0.0
@@ -170,9 +177,10 @@ def render_dashboard(
     out.append(HOME + CLR_EOS)
     out.append(BOLD + FG_CYAN +
                "=" * 78 + RESET + "\n")
-    out.append(BOLD + FG_WHITE +
-               "  MOSCA HIBRIDA :: CEREBRO REPTILIANO (FIJO) + CAPA PLASTICA" +
-               RESET + "\n")
+    title = "  MOSCA HIBRIDA :: REPTIL (FIJO) + LLM RAZONADOR (FIJO) + CAPA PLASTICA"
+    if not (llm_panel and llm_panel.get("enabled")):
+        title = "  MOSCA HIBRIDA :: CEREBRO REPTILIANO (FIJO) + CAPA PLASTICA"
+    out.append(BOLD + FG_WHITE + title + RESET + "\n")
     out.append(BOLD + FG_CYAN +
                "=" * 78 + RESET + "\n")
 
@@ -201,6 +209,15 @@ def render_dashboard(
     out.append(f"  peso |w| medio        : {net_stats['mean_abs_weight']:.4e}\n")
     out.append(f"  peso |w| maximo       : {net_stats['max_abs_weight']:.4e}\n\n")
 
+    if llm_panel and llm_panel.get("enabled"):
+        out.append(BOLD + FG_BLUE + "[ RAZONAMIENTO INTERNO - LLM (PESOS CONGELADOS) ]" + RESET + "\n")
+        out.append(f"  modelo                : {llm_panel.get('model', '-')}\n")
+        out.append(f"  intencion activa      : {BOLD}{FG_CYAN}{llm_panel.get('intent', '-')}{RESET}  "
+                   f"(conf {llm_panel.get('confidence', 0):.2f}  fuente {llm_panel.get('source', '-')})\n")
+        out.append(f"  llamadas ok / fallo   : {llm_panel.get('calls_ok', 0)} / {llm_panel.get('calls_fail', 0)}\n")
+        snip = str(llm_panel.get("snippet", ""))[:72].replace("\n", " ")
+        out.append(f"  ultima salida         : {DIM}{snip}{RESET}\n\n")
+
     out.append(BOLD + FG_GREEN + "[ MUNDO SIMULADO ]" + RESET + "\n")
     energy_bar = bar(world.energy, 1.0, width=20,
                      full="#", empty=".")
@@ -208,7 +225,7 @@ def render_dashboard(
     out.append(f"  energia mosca         : {e_color}{energy_bar}{RESET} {world.energy:.2f}\n")
     out.append(f"  posicion              : ({world.fly_pos[0]:+5.2f}, "
                f"{world.fly_pos[1]:+5.2f}, {world.fly_pos[2]:+5.2f})\n")
-    out.append(f"  accion actual         : {BOLD}{FG_CYAN}{ACTIONS[last_action]:>10s}{RESET}   "
+    out.append(f"  accion actual         : {BOLD}{FG_CYAN}{ACTIONS[last_action]:<16s}{RESET}   "
                f"temperatura: {temperature:.2f}\n\n")
 
     out.append(BOLD + FG_BLUE + "[ DESEMPENO - CONTADORES ABSOLUTOS Y TENDENCIA ]" + RESET + "\n")
@@ -233,7 +250,7 @@ def render_dashboard(
     for i, name in enumerate(ACTIONS):
         p = action_pct[i]
         sel = " <" if i == last_action else "  "
-        out.append(f"  {name:<10s} {bar(p, max_pct, width=30)} "
+        out.append(f"  {name:<16s} {bar(p, max_pct, width=26)} "
                    f"{p*100:5.1f}%{sel}\n")
 
     out.append("\n" + DIM + FG_GRAY +
@@ -251,6 +268,9 @@ def run(
     refresh_every: int = 10,
     device: str = "cpu",
     seed: int = 7,
+    use_llm: bool = False,
+    llm_model: str = "gemma3:270m",
+    llm_every: int = 30,
 ) -> None:
 
     torch.manual_seed(seed)
@@ -272,10 +292,15 @@ def run(
     assert frozen_info["trainable_params"] == 0, "El nucleo NO esta congelado"
 
     motor_dim = int(fly_brain.motor_mask.sum().item())
-    state_dim = motor_dim + 11
+    n_intents = len(INTENTS)
+    state_dim = motor_dim + 11 + n_intents
     net = ExpansiveNetwork(
         input_size=state_dim, hidden_size=hidden, output_size=len(ACTIONS),
     ).to(device)
+
+    reasoner = FrozenLLMReasoner(model=llm_model, n_actions=len(ACTIONS)) if use_llm else None
+    last_intent_vec = np.zeros(n_intents, dtype=np.float32)
+    last_llm_bias = np.zeros(len(ACTIONS), dtype=np.float32)
 
     world = FlyWorld(size=world_size, seed=seed)
 
@@ -302,7 +327,13 @@ def run(
     print(f"\nMundo: cubo {world_size}x{world_size}x{world_size}  "
           f"({len(world.food)} comidas, {len(world.threat)} peligros, "
           f"{len(world.safe)} seguros)")
-    print(f"Capa plastica: {state_dim} -> {hidden} -> {len(ACTIONS)}")
+    print(f"Acciones motoras     : {len(ACTIONS)}  {', '.join(ACTIONS[:4])}...")
+    print(f"Capa plastica        : {state_dim} -> {hidden} -> {len(ACTIONS)}")
+    if reasoner:
+        print(f"LLM razonador (fijo): modelo={llm_model!r}  cada {llm_every} pasos  "
+              f"(Ollama; sin entrenamiento en linea)")
+    else:
+        print("LLM razonador        : desactivado")
     print(f"Iniciando en 1s...")
     time.sleep(1.0)
 
@@ -321,21 +352,28 @@ def run(
             threat_before = world.hit_threat
             safe_before = world.rested_safe
 
+            if reasoner is not None and (step == 1 or step % llm_every == 0):
+                last_intent_vec, last_llm_bias = reasoner.reason(world)
+
             with torch.no_grad():
                 sensory = build_sensory(world, n_sensory, rng)
                 activity = fly_brain(sensory, steps=2)
                 motor = fly_brain.motor_output(activity).squeeze(0)
 
             external = torch.from_numpy(world.sense())
-            state = torch.cat([motor, external])
+            intent_t = torch.from_numpy(last_intent_vec).float()
+            state = torch.cat([motor, external, intent_t])
 
             logits = net(state)
+            bias_t = torch.from_numpy(last_llm_bias).to(device=device, dtype=logits.dtype)
+            biased_logits = logits + bias_t
+
             temperature = max(0.8, 1.5 * np.exp(-step / 10000))
             epsilon = max(0.15, 0.6 * np.exp(-step / 5000))
             if rng.random() < epsilon:
                 action_idx = int(rng.integers(0, len(ACTIONS)))
             else:
-                action_idx = select_action(logits, temperature, rng)
+                action_idx = select_action(biased_logits, temperature, rng)
             last_action = action_idx
 
             reward = world.step(action_idx)
@@ -348,8 +386,8 @@ def run(
             else:
                 advantage = 0.0
 
-            log_probs = torch.log_softmax(logits, dim=0)
-            probs = torch.softmax(logits, dim=0)
+            log_probs = torch.log_softmax(biased_logits, dim=0)
+            probs = torch.softmax(biased_logits, dim=0)
             entropy = -(probs * log_probs).sum()
             loss = (-torch.tensor(advantage, device=device) * log_probs[action_idx]
                     - 0.08 * entropy)
@@ -381,6 +419,20 @@ def run(
                 elapsed = tock - session_start
                 avg_fps = float(np.mean(fps_buf)) if fps_buf else 0.0
 
+                llm_panel = None
+                if reasoner is not None:
+                    st = reasoner.state
+                    llm_panel = {
+                        "enabled": True,
+                        "model": llm_model,
+                        "intent": st.last_intent,
+                        "confidence": st.last_confidence,
+                        "source": st.last_source,
+                        "calls_ok": st.calls_ok,
+                        "calls_fail": st.calls_fail,
+                        "snippet": st.last_raw,
+                    }
+
                 dash = render_dashboard(
                     step=step, elapsed=elapsed, fps=avg_fps,
                     world=world, fly_info=fly_info,
@@ -391,6 +443,7 @@ def run(
                     threat_rate_hist=threat_rate_hist,
                     safe_rate_hist=safe_rate_hist,
                     last_action=last_action, temperature=temperature,
+                    llm_panel=llm_panel,
                 )
                 sys.stdout.write(dash)
                 sys.stdout.flush()
@@ -421,6 +474,10 @@ def run(
     print(f"  peso plastico max    : {net_stats['max_abs_weight']:.4e}")
     print(f"  nucleo reptiliano    : drift sinaptico = {drift:+.2e}  "
           f"{'[INMOVIL, OK]' if abs(drift) < 1e-6 else '[ALTERADO]'}")
+    if reasoner is not None:
+        st = reasoner.state
+        print(f"  LLM (sin entrenar)   : intent={st.last_intent!r}  "
+              f"llamadas ok={st.calls_ok}  fallos={st.calls_fail}")
 
     first_q = max(1, len(reward_hist) // 4)
     inicial = np.mean(list(reward_hist)[:first_q])
@@ -466,6 +523,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--synthetic", action="store_true")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--llm", action="store_true",
+                   help="activar razonamiento interno via Ollama (pesos del LLM congelados)")
+    p.add_argument("--llm-model", default="gemma3:270m",
+                   help="modelo Ollama pequeno, ej: gemma3:270m, gemma2:2b, gemma2:1b")
+    p.add_argument("--llm-every", type=int, default=30,
+                   help="cada cuantos pasos se reconsulta el LLM")
     return p.parse_args()
 
 
@@ -480,4 +543,7 @@ if __name__ == "__main__":
         refresh_every=args.refresh_every,
         device=args.device,
         seed=args.seed,
+        use_llm=args.llm,
+        llm_model=args.llm_model,
+        llm_every=args.llm_every,
     )

@@ -14,9 +14,16 @@ Experimento que combina:
    experimento es: **¿se puebla sola? ¿aparecen nuevas sinapsis
    funcionales a lo largo de la vida?**
 
-3. (Opcional) **Ollama** como "maestro" externo que ocasionalmente
-   sugiere una accion. No controla la mosca, solo sesga ligeramente los
-   logits.
+3. (Opcional) **Ollama** como "maestro" externo en `experiment.py` que
+   ocasionalmente sugiere una accion.
+
+4. **Razonamiento interno con LLM pequeno (pesos congelados)** en
+   `stats_simulation.py`: un modelo local (p. ej. Gemma en Ollama) emite
+   intenciones abstractas (`buscar_comida`, `huir_peligro`, etc.) en JSON.
+   Esas intenciones se codifican como vector extra de entrada de la red
+   plastica y aplican un **sesgo fijo** sobre los logits de accion. El LLM
+   **no se entrena** en linea; solo la capa plastica aprende a combinar
+   instinto + razonamiento + mundo.
 
 ## Instalacion
 
@@ -24,11 +31,16 @@ Experimento que combina:
 pip install -r requirements.txt
 ```
 
-Si quieres usar Ollama (opcional), instala [Ollama](https://ollama.com/) y baja un modelo:
+Si quieres usar Ollama, instala [Ollama](https://ollama.com/) y baja modelos:
 
 ```bash
 ollama pull phi3
+ollama pull gemma3:270m
 ```
+
+`gemma3:270m` es un Gemma pequeno adecuado para CPU; si no existe en tu
+version de Ollama, prueba `gemma2:2b` o `gemma2:1b` y pasalo con
+`--llm-model`.
 
 ## Uso
 
@@ -74,6 +86,16 @@ Pasos:
 Connections (Unfiltered, 277 MB), ni las versiones "Original Used Prior
 To July 2025": no se usan en este experimento.
 
+### Simulacion con mundo + estadisticas en terminal (`stats_simulation.py`)
+
+```bash
+python stats_simulation.py --max-steps 10000
+python stats_simulation.py --llm --llm-model gemma3:270m --llm-every 30
+```
+
+Sin Ollama o sin el modelo instalado, el razonador cae en reglas heuristicas
+equivalentes (mismo interfaz).
+
 ### Mas opciones
 
 ```bash
@@ -91,6 +113,8 @@ python experiment.py --synthetic             # forzar conectoma sintetico
 | `fly_brain.py`             | Carga el conectoma como matriz de pesos fija (`FlyConnectomeBrain`). |
 | `expansive_network.py`     | Red plastica en blanco (`ExpansiveNetwork`). |
 | `experiment.py`            | Bucle de refuerzo + graficas. |
+| `stats_simulation.py`      | Mundo simulado + dashboard terminal + opcion LLM interno. |
+| `llm_reasoner.py`          | LLM local (Ollama) o heuristica; intenciones abstractas. |
 | `data/`                    | CSV del conectoma. |
 | `results.png`              | Graficas generadas al final. |
 
