@@ -27,7 +27,7 @@ class ExpansiveNetwork(nn.Module):
         hidden_size: int = 2000,
         output_size: int = 8,
         blank_sigma: float = 1e-4,
-        lr: float = 0.01,
+        lr: float = 0.002,
     ):
         super().__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)

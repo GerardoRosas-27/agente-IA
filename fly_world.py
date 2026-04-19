@@ -8,6 +8,11 @@ Un cubo con 3 tipos de objetos:
 
 La mosca tiene posicion y orientacion (heading). Sus sensores cuantifican
 distancia y direccion al item mas cercano de cada tipo + energia interna.
+
+RECOMPENSAS:
+  - densa  : pequena por acercarse/alejarse (gradiente espacial)
+  - evento : grande al tocar un item (atractor de la politica)
+  - costo  : minimo por paso (estimula actuar, no quedarse quieto)
 """
 from __future__ import annotations
 
@@ -35,7 +40,7 @@ class FlyWorld:
     def __init__(
         self,
         size: float = 20.0,
-        n_food: int = 8,
+        n_food: int = 10,
         n_threat: int = 4,
         n_safe: int = 3,
         seed: int = 0,
@@ -59,13 +64,23 @@ class FlyWorld:
         self.rested_safe = 0
         self.steps = 0
 
-        self.speed = 0.25 * (size / 20.0)
-        self.turn_rate = 0.35
-        self.vertical_step = 0.2 * (size / 20.0)
+        self.speed = 0.35 * (size / 20.0)
+        self.turn_rate = 0.45
+        self.vertical_step = 0.3 * (size / 20.0)
+        self.catch_radius = 1.5
+
+        self._prev_food_dist = self._min_dist_to(self.food)
+        self._prev_threat_dist = self._min_dist_to(self.threat)
+        self._prev_safe_dist = self._min_dist_to(self.safe)
 
     def _spawn_points(self, n: int) -> np.ndarray:
         half = self.size / 2
         return self.rng.uniform(-half, half, size=(n, 3)).astype(np.float32)
+
+    def _min_dist_to(self, items: np.ndarray) -> float:
+        if len(items) == 0:
+            return self.size
+        return float(np.linalg.norm(items - self.fly_pos, axis=1).min())
 
     def _nearest(self, items: np.ndarray) -> tuple[float, np.ndarray]:
         if len(items) == 0:
@@ -100,68 +115,91 @@ class FlyWorld:
 
     def step(self, action_idx: int) -> float:
         self.steps += 1
-        reward = -0.005
+        reward = 0.0
         a = ACTIONS[action_idx]
 
         if a == "avanzar":
             self.fly_pos += self.fly_heading * self.speed
         elif a == "retroceder":
-            self.fly_pos -= self.fly_heading * self.speed * 0.7
+            self.fly_pos -= self.fly_heading * self.speed * 0.6
         elif a == "girar_izq":
             self.fly_heading = _unit(_rot_z(self.fly_heading, +self.turn_rate))
-            self.fly_pos += self.fly_heading * self.speed * 0.3
+            self.fly_pos += self.fly_heading * self.speed * 0.25
         elif a == "girar_der":
             self.fly_heading = _unit(_rot_z(self.fly_heading, -self.turn_rate))
-            self.fly_pos += self.fly_heading * self.speed * 0.3
+            self.fly_pos += self.fly_heading * self.speed * 0.25
         elif a == "quieto":
-            pass
+            reward -= 0.04
         elif a == "explorar":
             jitter = self.rng.normal(0, 0.5, size=3).astype(np.float32)
             self.fly_heading = _unit(self.fly_heading + jitter * 0.3)
             self.fly_pos += self.fly_heading * self.speed * 0.7
         elif a == "subir":
-            self.fly_pos[2] += self.vertical_step
+            if self.fly_pos[2] < self.size / 2 - 0.1:
+                self.fly_pos[2] += self.vertical_step
+            else:
+                reward -= 0.1
         elif a == "bajar":
-            self.fly_pos[2] -= self.vertical_step
+            if self.fly_pos[2] > -self.size / 2 + 0.1:
+                self.fly_pos[2] -= self.vertical_step
+            else:
+                reward -= 0.1
 
         half = self.size / 2
         for i in range(3):
             if abs(self.fly_pos[i]) > half:
                 self.fly_pos[i] = np.sign(self.fly_pos[i]) * half
-                reward -= 0.1
+                reward -= 0.2
                 self.fly_heading[i] *= -1
+
+        if len(self.trail) >= 5:
+            disp = float(np.linalg.norm(self.fly_pos - self.trail[-5]))
+            if disp < 0.3:
+                reward -= 0.05
+
+        food_d = self._min_dist_to(self.food)
+        threat_d = self._min_dist_to(self.threat)
+        safe_d = self._min_dist_to(self.safe)
+
+        reward += 0.25 * (self._prev_food_dist - food_d)
+        reward -= 0.15 * (self._prev_threat_dist - threat_d)
+        if self.energy < 0.5:
+            reward += 0.15 * (self._prev_safe_dist - safe_d)
+
+        self._prev_food_dist = food_d
+        self._prev_threat_dist = threat_d
+        self._prev_safe_dist = safe_d
 
         reward += self._check_encounters()
 
-        self.energy = float(np.clip(self.energy - 0.003, 0.0, 1.0))
+        self.energy = float(np.clip(self.energy - 0.002, 0.0, 1.0))
         if self.energy <= 0.0:
-            reward -= 0.2
+            reward -= 0.1
 
         self.trail.append(self.fly_pos.copy())
         return float(reward)
 
     def _check_encounters(self) -> float:
         reward = 0.0
-        catch_r = 1.0
-
         for i, p in enumerate(self.food):
-            if np.linalg.norm(self.fly_pos - p) < catch_r:
-                reward += 1.0
-                self.energy = min(1.0, self.energy + 0.4)
+            if np.linalg.norm(self.fly_pos - p) < self.catch_radius:
+                reward += 5.0
+                self.energy = min(1.0, self.energy + 0.5)
                 self.eaten_food += 1
                 self.food[i] = self._spawn_points(1)[0]
+                self._prev_food_dist = self._min_dist_to(self.food)
 
         for i, p in enumerate(self.threat):
-            if np.linalg.norm(self.fly_pos - p) < catch_r:
-                reward -= 1.0
+            if np.linalg.norm(self.fly_pos - p) < self.catch_radius:
+                reward -= 2.0
                 self.energy = max(0.0, self.energy - 0.2)
                 self.hit_threat += 1
 
         for p in self.safe:
-            if np.linalg.norm(self.fly_pos - p) < catch_r * 1.2:
-                if self.energy < 0.5:
-                    reward += 0.3
-                    self.energy = min(1.0, self.energy + 0.05)
+            if np.linalg.norm(self.fly_pos - p) < self.catch_radius * 1.3:
+                if self.energy < 0.6:
+                    reward += 1.0
+                    self.energy = min(1.0, self.energy + 0.08)
                     self.rested_safe += 1
 
         return reward
