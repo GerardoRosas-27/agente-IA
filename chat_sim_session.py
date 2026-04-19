@@ -104,6 +104,11 @@ class FlyChatSession:
         self._question_busy = False
         self.question_queue: deque[str] = deque()
 
+    @property
+    def ollama_chat(self) -> Callable | None:
+        """Mismo cliente Ollama que usa el puente y las preguntas (multi-agente)."""
+        return self._ollama_chat
+
     def drain_question_queue(self) -> list[str]:
         out = []
         while self.question_queue:

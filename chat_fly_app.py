@@ -17,6 +17,8 @@ import tkinter as tk
 from tkinter import messagebox, scrolledtext
 
 from chat_sim_session import FlyChatSession
+from multi_agent_orchestrator import run_collaborative_program
+from unified_fly_memory import SharedFlyMemory
 
 
 def main() -> None:
@@ -39,6 +41,13 @@ def main() -> None:
         device="cpu",
         llm_bridge_model=args.llm_model,
         force_synthetic=args.synthetic,
+    )
+    shared_mem = SharedFlyMemory(
+        n_slots=8,
+        mem_dim=96,
+        msg_dim=40,
+        n_agents_max=5,
+        lr=0.002,
     )
 
     header = tk.Label(
@@ -74,7 +83,48 @@ def main() -> None:
         log.insert(tk.END, body.rstrip() + "\n\n", tag)
         log.see(tk.END)
 
-    append("sys", "[Sistema]", "Cargando conectoma y red plastica… listo. Escribe abajo.")
+    append(
+        "sys",
+        "[Sistema]",
+        "Cargando conectoma y red plastica… listo. Escribe abajo.\n"
+        "Memoria compartida multi-agente (reptil + plastico): panel inferior.",
+    )
+
+    agent_row = tk.Frame(root, bg="#1a1d24")
+    agent_row.pack(fill="x", padx=10, pady=(0, 4))
+    tk.Label(
+        agent_row,
+        text="Tarea (programa colaborativo):",
+        bg="#1a1d24",
+        fg="#9ca3af",
+        font=("Segoe UI", 9),
+    ).pack(side="left", padx=(0, 6))
+    task_entry = tk.Entry(
+        agent_row,
+        font=("Segoe UI", 10),
+        bg="#252936",
+        fg="#f3f4f6",
+        insertbackground="#f3f4f6",
+        relief="flat",
+        width=48,
+    )
+    task_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+    tk.Label(agent_row, text="N:", bg="#1a1d24", fg="#9ca3af", font=("Segoe UI", 9)).pack(
+        side="left", padx=(0, 2)
+    )
+    n_spin = tk.Spinbox(
+        agent_row,
+        from_=1,
+        to=5,
+        width=3,
+        font=("Segoe UI", 10),
+        bg="#252936",
+        fg="#f3f4f6",
+        buttonbackground="#3b82f6",
+    )
+    n_spin.delete(0, tk.END)
+    n_spin.insert(0, "3")
+    n_spin.pack(side="left", padx=(0, 8))
 
     row = tk.Frame(root, bg="#1a1d24")
     row.pack(fill="x", padx=10, pady=(0, 10))
@@ -90,6 +140,7 @@ def main() -> None:
     entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
 
     busy = {"v": False}
+    busy_agents = {"v": False}
 
     def on_send(_ev=None) -> None:
         if busy["v"]:
@@ -137,6 +188,70 @@ def main() -> None:
         activebackground="#2563eb",
         relief="flat",
         padx=14,
+    ).pack(side="right")
+
+    def on_run_agents() -> None:
+        if busy_agents["v"] or busy["v"]:
+            return
+        task = task_entry.get().strip()
+        if not task:
+            messagebox.showinfo("Multi-agente", "Escribe una tarea en el campo superior.")
+            return
+        try:
+            n_ag = int(n_spin.get())
+        except ValueError:
+            n_ag = 3
+        n_ag = max(1, min(5, n_ag))
+        busy_agents["v"] = True
+        append("sys", "[Multi-agente]", f"Iniciando {n_ag} sub-agentes…")
+
+        def worker_ma() -> None:
+            try:
+                unified, proposals, loss_v = run_collaborative_program(
+                    task=task,
+                    n_agents=n_ag,
+                    memory=shared_mem,
+                    model=session.llm_model,
+                    ollama_chat=session.ollama_chat,
+                    rounds=1,
+                )
+            except Exception as exc:
+                root.after(0, lambda: on_ma_fail(exc))
+                return
+            snap = shared_mem.snapshot_text()
+            root.after(0, lambda: on_ma_done(unified, proposals, loss_v, snap))
+
+        def on_ma_fail(exc: Exception) -> None:
+            busy_agents["v"] = False
+            messagebox.showerror("Multi-agente", str(exc))
+
+        def on_ma_done(
+            unified: str,
+            proposals: list[str],
+            loss_v: float,
+            snap: str,
+        ) -> None:
+            for i, p in enumerate(proposals):
+                append("puente", f"[Sub-agente {i + 1}]", p)
+            append("cerebro", "[Respuesta unificada]", unified)
+            append(
+                "sys",
+                "[Memoria compartida]",
+                f"loss paso={loss_v:.4f}  snapshot(global parcial)={snap}",
+            )
+            busy_agents["v"] = False
+
+        threading.Thread(target=worker_ma, daemon=True).start()
+
+    tk.Button(
+        agent_row,
+        text="Ejecutar N agentes",
+        command=on_run_agents,
+        bg="#6366f1",
+        fg="white",
+        activebackground="#4f46e5",
+        relief="flat",
+        padx=10,
     ).pack(side="right")
 
     def sim_tick() -> None:

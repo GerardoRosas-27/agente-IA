@@ -118,6 +118,17 @@ python chat_fly_app.py
 python chat_fly_app.py --hidden 4000 --llm-model gemma2:2b
 ```
 
+**Multi-agente (hasta 5):** en la misma ventana hay un campo *Tarea
+(programa colaborativo)*, un selector **N** y **Ejecutar N agentes**.
+Varios prompts cortos al LLM escriben secuencialmente en una memoria
+compartida aprendible (`SharedFlyMemory` en `unified_fly_memory.py`: mezcla
+reptiliana global `rept_W` + escritor plástico por mensaje). Al final se
+pide una **respuesta unificada** y un paso de `loss` (coherencia sintáctica +
+embedding de la fusión vs. estado global) actualiza esa memoria. El
+conectoma FlyWire del chat sigue siendo **otro** subsistema (fijo); la
+memoria compartida multi-agente es un núcleo pequeño aparte. Sin Ollama, el
+orquestador usa borradores heurísticos en lugar de llamadas de red.
+
 ### Mas opciones
 
 ```bash
@@ -139,7 +150,9 @@ python experiment.py --synthetic             # forzar conectoma sintetico
 | `llm_reasoner.py`          | LLM local (Ollama) o heuristica; intenciones abstractas. |
 | `chat_bridge.py`           | LLM clasifica texto → estímulos (no genera charla). |
 | `chat_sim_session.py`      | Bucle simulacion + aprendizaje para el chat. |
-| `chat_fly_app.py`          | Ventana de chat (Tkinter). |
+| `chat_fly_app.py`          | Ventana de chat (Tkinter) + panel multi-agente. |
+| `unified_fly_memory.py`    | Memoria compartida aprendible (reptil + plástico). |
+| `multi_agent_orchestrator.py` | Sub-agentes secuenciales + fusión + un paso de aprendizaje. |
 | `fly_voice.py`             | Frases del “cerebro” a partir de tensores (sin LLM). |
 | `data/`                    | CSV del conectoma. |
 | `results.png`              | Graficas generadas al final. |
