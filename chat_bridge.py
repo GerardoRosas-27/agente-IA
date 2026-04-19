@@ -19,6 +19,27 @@ import numpy as np
 
 from fly_world import FlyWorld
 
+
+def local_llm_chat_call(
+    model: str,
+    messages: list,
+    options: dict | None = None,
+) -> dict | None:
+    """
+    Misma ruta que `LanguageBridge` para el modelo local: `ollama.chat`
+    contra el daemon en tu máquina (sin descargas desde aquí).
+
+    Si el import falla o el daemon no responde, devuelve `None` para que
+    el llamador use heurística sin tratarlo como error fatal.
+    """
+    try:
+        import ollama
+
+        return ollama.chat(model=model, messages=messages, options=options or {})
+    except Exception:
+        return None
+
+
 SYSTEM = (
     "Eres un modulo de ENRUTAMIENTO sensorial. No escribes respuestas al humano. "
     "Solo clasificas el MENSAJE en cuatro intensidades 0.0-1.0.\n"

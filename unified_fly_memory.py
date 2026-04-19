@@ -23,6 +23,7 @@ class SharedFlyMemory(nn.Module):
         n_agents_max: int = 5,
         writer_hidden: int = 192,
         lr: float = 0.002,
+        blank_init: bool = False,
     ):
         super().__init__()
         self.n_slots = n_slots
@@ -30,9 +31,14 @@ class SharedFlyMemory(nn.Module):
         self.msg_dim = msg_dim
         self.n_agents_max = n_agents_max
 
-        self.mem = nn.Parameter(torch.randn(n_slots, mem_dim) * 0.02)
-        self.rept_W = nn.Parameter(torch.randn(mem_dim, mem_dim) * 0.02)
-        self.rept_b = nn.Parameter(torch.zeros(mem_dim))
+        if blank_init:
+            self.mem = nn.Parameter(torch.zeros(n_slots, mem_dim))
+            self.rept_W = nn.Parameter(torch.zeros(mem_dim, mem_dim))
+            self.rept_b = nn.Parameter(torch.zeros(mem_dim))
+        else:
+            self.mem = nn.Parameter(torch.randn(n_slots, mem_dim) * 0.02)
+            self.rept_W = nn.Parameter(torch.randn(mem_dim, mem_dim) * 0.02)
+            self.rept_b = nn.Parameter(torch.zeros(mem_dim))
 
         in_w = msg_dim + n_agents_max + mem_dim + mem_dim
         self.writer = nn.Sequential(

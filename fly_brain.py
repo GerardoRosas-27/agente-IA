@@ -1,22 +1,23 @@
 """
-Cerebro FIJO de la mosca reconstruido a partir del conectoma FlyWire.
+Cerebro de la mosca a partir del conectoma FlyWire (o sintético).
 
-Cada neurona es un nodo; cada sinapsis (pre -> post) aporta un peso
-proporcional al numero de contactos sinapticos (`syn_count`).
-Las neuronas inhibitorias (GABA / glicina) reciben signo negativo.
+Modo clásico: matriz sináptica **fija** (buffer) = instinto congelado.
 
-Esto nos da una "red recurrente de un paso" que preserva la conectividad
-real medida por el consorcio y sirve como `INSTINTO` congelado: no se
-entrena, solo procesa estimulos sensoriales.
+Modo `blank_learnable=True`: misma **topología** (qué neuronas existen,
+máscaras sensor/motor), pero **W = 0** al inicio y `W` es `nn.Parameter`
+para aprendizaje a mediano plazo (plasticidad del núcleo recurrente),
+combinado con el optimizador de la sesión de chat.
 """
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.optim as optim
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -50,8 +51,11 @@ class FlyConnectomeBrain(nn.Module):
         max_neurons: int | None = 3000,
         normalize: bool = True,
         device: str | torch.device = "cpu",
+        blank_learnable: bool = False,
+        fly_lr: float = 3e-5,
     ):
         super().__init__()
+        self.blank_learnable = bool(blank_learnable)
         neurons_df, conn_df = _load_tables()
 
         if max_neurons is not None and len(neurons_df) > max_neurons:
@@ -81,12 +85,22 @@ class FlyConnectomeBrain(nn.Module):
         vals = torch.from_numpy(syn * signs[pre_idx])
         W.index_put_((post_t, pre_t), vals, accumulate=True)
 
-        if normalize:
-            max_abs = W.abs().max().item()
-            if max_abs > 0:
-                W = W / max_abs
+        if not self.blank_learnable:
+            if normalize:
+                max_abs = W.abs().max().item()
+                if max_abs > 0:
+                    W = W / max_abs
+        else:
+            W = torch.zeros(n, n, dtype=torch.float32)
 
-        self.register_buffer("W", W.to(device))
+        W = W.to(device)
+        if self.blank_learnable:
+            self.W = nn.Parameter(W)
+            self.fly_optimizer = optim.Adam([self.W], lr=fly_lr)
+        else:
+            self.register_buffer("W", W)
+            self.fly_optimizer = None
+
         self.n_neurons = n
         self.register_buffer(
             "signs", torch.from_numpy(signs).to(device)
@@ -118,35 +132,55 @@ class FlyConnectomeBrain(nn.Module):
         )
         self.motor_indices = np.where(motor_mask > 0)[0]
 
-        for p in self.parameters():
-            p.requires_grad_(False)
+        if not self.blank_learnable:
+            for p in self.parameters():
+                p.requires_grad_(False)
 
-    @torch.no_grad()
-    def forward(self, sensory_input: torch.Tensor, steps: int = 2) -> torch.Tensor:
+    def forward(
+        self,
+        sensory_input: torch.Tensor,
+        steps: int = 2,
+        enable_grad: bool = False,
+    ) -> torch.Tensor:
         """
         sensory_input: (batch, n_sensory) o (n_sensory,)
         Retorna la activacion completa (batch, n_neurons) tras `steps`
-        pasos de propagacion con la matriz sinaptica fija.
+        pasos de propagacion con la matriz sinaptica.
+
+        `enable_grad=True` solo en modo blank_learnable para acoplar
+        gradientes desde la red plástica (REINFORCE).
         """
-        if sensory_input.dim() == 1:
-            sensory_input = sensory_input.unsqueeze(0)
-        batch = sensory_input.shape[0]
-        n_sensory = int(self.sensory_mask.sum().item())
+        g = enable_grad and self.blank_learnable
+        cm = contextlib.nullcontext() if g else torch.no_grad()
+        with cm:
+            if sensory_input.dim() == 1:
+                sensory_input = sensory_input.unsqueeze(0)
+            batch = sensory_input.shape[0]
+            n_sensory = int(self.sensory_mask.sum().item())
 
-        x = torch.zeros(batch, self.n_neurons, device=self.W.device, dtype=self.W.dtype)
-        pad = torch.zeros(batch, n_sensory, device=self.W.device, dtype=self.W.dtype)
-        if sensory_input.shape[1] < n_sensory:
-            pad[:, : sensory_input.shape[1]] = sensory_input
-        else:
-            pad = sensory_input[:, :n_sensory]
-        x[:, self.sensory_indices] = pad
+            x = torch.zeros(
+                batch, self.n_neurons, device=self.W.device, dtype=self.W.dtype
+            )
+            pad = torch.zeros(
+                batch, n_sensory, device=self.W.device, dtype=self.W.dtype
+            )
+            if sensory_input.shape[1] < n_sensory:
+                pad[:, : sensory_input.shape[1]] = sensory_input
+            else:
+                pad = sensory_input[:, :n_sensory]
+            x[:, self.sensory_indices] = pad
 
-        for _ in range(steps):
-            x = torch.tanh(x @ self.W.T)
+            for _ in range(steps):
+                y = torch.tanh(x @ self.W.T)
+                # Con W=0 puro, y sería 0 y no habría gradiente útil hacia W;
+                # el residual conserva la inyección sensorial y desbloquea el aprendizaje.
+                if self.blank_learnable:
+                    x = y + 0.12 * x
+                else:
+                    x = y
 
-        return x
+            return x
 
-    @torch.no_grad()
     def motor_output(self, activity: torch.Tensor) -> torch.Tensor:
         """Extrae la actividad de las neuronas motoras."""
         return activity[:, self.motor_indices]
@@ -163,4 +197,5 @@ class FlyConnectomeBrain(nn.Module):
             "excitatory_neurons": int(self.n_neurons - inhib),
             "n_sensory": int(self.sensory_mask.sum().item()),
             "n_motor": int(self.motor_mask.sum().item()),
+            "blank_learnable": self.blank_learnable,
         }

@@ -57,6 +57,8 @@ class FlyChatSession:
         world_size: float = 20.0,
         llm_bridge_model: str = "gemma3:270m",
         force_synthetic: bool = False,
+        blank_fly_brain: bool = False,
+        fly_lr: float = 3e-5,
     ):
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -65,7 +67,12 @@ class FlyChatSession:
         self.llm_model = llm_bridge_model
 
         ensure_connectome(force_synthetic=force_synthetic, n_neurons=5000)
-        self.fly = FlyConnectomeBrain(max_neurons=fly_neurons, device=device)
+        self.fly = FlyConnectomeBrain(
+            max_neurons=fly_neurons,
+            device=device,
+            blank_learnable=blank_fly_brain,
+            fly_lr=fly_lr,
+        )
         self.motor_dim = int(self.fly.motor_mask.sum().item())
         self.n_sensory = int(self.fly.sensory_mask.sum().item())
 
@@ -152,10 +159,14 @@ class FlyChatSession:
         self.sim_steps += 1
         self.steps_since_user += 1
 
-        with torch.no_grad():
-            sensory = build_sensory(self.world, self.n_sensory, self.rng)
-            activity = self.fly(sensory, steps=2)
-            motor = self.fly.motor_output(activity).squeeze(0)
+        sensory = build_sensory(self.world, self.n_sensory, self.rng)
+        fly_grad = getattr(self.fly, "blank_learnable", False)
+        if fly_grad:
+            activity = self.fly(sensory, steps=2, enable_grad=True)
+        else:
+            with torch.no_grad():
+                activity = self.fly(sensory, steps=2, enable_grad=False)
+        motor = self.fly.motor_output(activity).squeeze(0)
 
         ext = torch.from_numpy(self.world.sense()).float()
         intent_t = torch.from_numpy(self.intent_vec).float()
@@ -186,8 +197,26 @@ class FlyChatSession:
         log_probs = torch.log_softmax(motor_logits, dim=0)
         probs = torch.softmax(motor_logits, dim=0)
         entropy = -(probs * log_probs).sum()
-        loss = -torch.tensor(advantage, device=self.device) * log_probs[action_idx] - 0.07 * entropy
-        self.net.learn(loss)
+        loss = (
+            -torch.tensor(advantage, device=self.device, dtype=motor_logits.dtype)
+            * log_probs[action_idx]
+            - 0.07 * entropy
+        )
+        if fly_grad:
+            loss = loss + 1e-7 * self.fly.W.pow(2).mean()
+            self.net.optimizer.zero_grad()
+            fo = getattr(self.fly, "fly_optimizer", None)
+            if fo is not None:
+                fo.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.net.parameters(), max_norm=5.0)
+            if fo is not None:
+                torch.nn.utils.clip_grad_norm_([self.fly.W], max_norm=1.0)
+            self.net.optimizer.step()
+            if fo is not None:
+                fo.step()
+        else:
+            self.net.learn(loss)
 
         act_name = ACTIONS[action_idx]
         if act_name in ("explorar", "planear", "olfatear"):
@@ -206,7 +235,7 @@ class FlyChatSession:
             return None
         with torch.no_grad():
             sensory = build_sensory(self.world, self.n_sensory, self.rng)
-            activity = self.fly(sensory, steps=2)
+            activity = self.fly(sensory, steps=2, enable_grad=False)
             motor = self.fly.motor_output(activity).squeeze(0)
         msg = brain_utterance(
             self.world, motor, ACTIONS[self.last_action], self.reward_ema

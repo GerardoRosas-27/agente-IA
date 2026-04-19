@@ -33,40 +33,56 @@ def syntax_score(code: str) -> float:
         return 0.0
 
 
-def _ollama(ollama_chat: Callable | None, model: str, system: str, user: str) -> str:
-    if ollama_chat is None:
-        if "fusiona" in system.lower():
-            parts = user.split("PROPUESTAS:", 1)
-            if len(parts) > 1:
-                body = parts[1].strip()
-                chunks = [c.strip() for c in body.split("---") if c.strip()]
-                merged = "\n\n".join(chunks[:12])[:4000]
-                return (
-                    "[sin Ollama — fusión heurística]\n\n" + merged
-                    if merged
-                    else "[sin Ollama] Sin propuestas para fusionar."
-                )
-        if "TAREA:" in user:
-            task = user.split("TAREA:", 1)[1].split("LECTURA", 1)[0].strip()[:400]
+def _heuristic_llm_text(system: str, user: str) -> str:
+    """Respuesta de respaldo (mismo criterio que el puente sin red)."""
+    if "fusiona" in system.lower():
+        parts = user.split("PROPUESTAS:", 1)
+        if len(parts) > 1:
+            body = parts[1].strip()
+            chunks = [c.strip() for c in body.split("---") if c.strip()]
+            merged = "\n\n".join(chunks[:12])[:4000]
             return (
-                "[sin Ollama — borrador]\n"
-                f"# Aporte\n"
-                f"- Objetivo: {task}\n"
-                "```python\ndef esqueleto():\n    raise NotImplementedError\n```"
+                "[borrador local — fusión]\n\n" + merged
+                if merged
+                else "[borrador local] Sin propuestas para fusionar."
             )
-        return user[:400]
-    try:
-        r = ollama_chat(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user[:12000]},
-            ],
-            options={"temperature": 0.35, "num_predict": 350},
+    if "TAREA:" in user:
+        task = user.split("TAREA:", 1)[1].split("LECTURA", 1)[0].strip()[:400]
+        return (
+            "[borrador local]\n"
+            f"# Aporte\n"
+            f"- Objetivo: {task}\n"
+            "```python\ndef esqueleto():\n    raise NotImplementedError\n```"
         )
-        return r["message"]["content"].strip()
-    except Exception as exc:
-        return f"[fallo_llm: {exc}]"
+    return user[:400]
+
+
+def _ollama(
+    ollama_chat: Callable | None,
+    model: str,
+    system: str,
+    user: str,
+    num_predict: int = 350,
+) -> str:
+    if ollama_chat is not None:
+        try:
+            r = ollama_chat(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user[:12000]},
+                ],
+                options={"temperature": 0.35, "num_predict": int(num_predict)},
+            )
+            if isinstance(r, dict):
+                raw = (r.get("message") or {}).get("content")
+                if raw is not None:
+                    t = str(raw).strip()
+                    if t:
+                        return t
+        except Exception:
+            pass
+    return _heuristic_llm_text(system, user)
 
 
 def run_collaborative_program(
@@ -76,6 +92,7 @@ def run_collaborative_program(
     model: str,
     ollama_chat: Callable | None,
     rounds: int = 1,
+    num_predict: int = 350,
 ) -> tuple[str, list[str], float]:
     """
     Una ronda = cada agente propone en orden; varias rondas repiten.
@@ -102,7 +119,7 @@ def run_collaborative_program(
                 f"LECTURA_MEMORIA_COMPARTIDA (vector parcial): {ctx_s}\n"
                 "Escribe solo tu aporte."
             )
-            text = _ollama(ollama_chat, model, sys, user)
+            text = _ollama(ollama_chat, model, sys, user, num_predict=num_predict)
             proposals.append(text.strip())
 
             emb = text_hash_embed(text, memory.msg_dim, device)
@@ -114,13 +131,17 @@ def run_collaborative_program(
         "Español. Sin repetir encabezados de agentes."
     )
     merge_user = f"TAREA:\n{task}\n\nPROPUESTAS:\n{blob[:10000]}"
-    unified = _ollama(ollama_chat, model, merge_sys, merge_user)
+    unified = _ollama(
+        ollama_chat, model, merge_sys, merge_user, num_predict=min(500, num_predict + 120)
+    )
 
     uemb = text_hash_embed(unified, memory.msg_dim, device)
     glob = mem_cur.mean(dim=0)
-    g = glob[: memory.msg_dim]
+    d = min(int(memory.mem_dim), int(memory.msg_dim))
+    g = glob[:d]
+    ue = uemb[:d]
     cos = torch.nn.functional.cosine_similarity(
-        g.unsqueeze(0), uemb.unsqueeze(0), dim=1
+        g.unsqueeze(0), ue.unsqueeze(0), dim=1
     ).squeeze(0)
     syn = float(syntax_score("\n".join(proposals) + "\n" + unified))
     loss = (

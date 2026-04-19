@@ -96,38 +96,30 @@ python stats_simulation.py --llm --llm-model gemma3:270m --llm-every 30
 Sin Ollama o sin el modelo instalado, el razonador cae en reglas heuristicas
 equivalentes (mismo interfaz).
 
-### Chat con el cerebro de la mosca (`chat_fly_app.py`)
+### Chat multi-agente (`multi_agent_app.py`)
 
-Interfaz grafica (Tkinter): **tu texto** pasa por el LLM solo como **puente**
-(JSON: hostil / amable / conversacion / curiosidad) y se inyecta en canales
-sociales del mundo. **La linea tipo "murmullo"** la arma el cerebro con
-plantillas a partir de tensores.
-
-**Preguntas aprendidas:** la red plastica es mas grande (`--hidden` por
-defecto 3200) y tiene dos cabezales extra: (1) una politica categorica sobre
-un **lexicon fijo de temas** (49 semillas en español — lo aprendible es *cual*
-tema se activa); (2) un **vector de instruccion** (28 numeros en tanh) que se
-pasa al LLM para que *articule* una pregunta corta alrededor de ese tema. El
-LLM **no inventa el tema**: lo elige la plasticidad. Cuando tu **siguiente**
-mensaje llega, el tono del puente produce una recompensa `R` y se aplica
-**REINFORCE** sobre la cabeza de preguntas (y el resto de pesos compartidos
-via `fc1`).
+Interfaz **solo** multi-agente: **sin conectoma**, sin simulación de mosca,
+sin descarga de datos al arrancar. Cada sub-agente y la fusión llaman al
+**mismo modelo** en tu Ollama local (`ollama serve` + modelo ya instalado;
+no se hace `pull` desde este script). Memoria compartida sintética en
+**blanco** (`SharedFlyMemory(..., blank_init=True)`): `mem` y núcleo reptil
+en cero; aprende el escritor plástico y la proyección de lectura.
 
 ```bash
-python chat_fly_app.py
-python chat_fly_app.py --hidden 4000 --llm-model gemma2:2b
+python multi_agent_app.py
+python multi_agent_app.py --llm-model gemma3:270m --num-predict 180
 ```
 
-**Multi-agente (hasta 5):** en la misma ventana hay un campo *Tarea
-(programa colaborativo)*, un selector **N** y **Ejecutar N agentes**.
-Varios prompts cortos al LLM escriben secuencialmente en una memoria
-compartida aprendible (`SharedFlyMemory` en `unified_fly_memory.py`: mezcla
-reptiliana global `rept_W` + escritor plástico por mensaje). Al final se
-pide una **respuesta unificada** y un paso de `loss` (coherencia sintáctica +
-embedding de la fusión vs. estado global) actualiza esa memoria. El
-conectoma FlyWire del chat sigue siendo **otro** subsistema (fijo); la
-memoria compartida multi-agente es un núcleo pequeño aparte. Sin Ollama, el
-orquestador usa borradores heurísticos en lugar de llamadas de red.
+`python chat_fly_app.py` redirige al mismo programa (compatibilidad).
+
+Dependencias **opcionales** (LangGraph / LangChain, no usadas por esta app):
+
+```bash
+pip install -r requirements-optional.txt
+```
+
+El experimento con mosca (`experiment.py`, `chat_sim_session.py`, conectoma)
+sigue en el repo pero **no** es la ventana principal de chat.
 
 ### Mas opciones
 
@@ -143,16 +135,17 @@ python experiment.py --synthetic             # forzar conectoma sintetico
 |---|---|
 | `download_connectome.py`   | Intenta bajar FlyWire o genera un conectoma sintetico de respaldo. |
 | `prepare_flywire_data.py`  | Convierte los CSV crudos de FlyWire al formato del proyecto. |
-| `fly_brain.py`             | Carga el conectoma como matriz de pesos fija (`FlyConnectomeBrain`). |
+| `fly_brain.py`             | `FlyConnectomeBrain`: conectoma fijo o modo `--blank-brain` (W aprendible). |
 | `expansive_network.py`     | Red plastica en blanco (`ExpansiveNetwork`). |
 | `experiment.py`            | Bucle de refuerzo + graficas. |
 | `stats_simulation.py`      | Mundo simulado + dashboard terminal + opcion LLM interno. |
 | `llm_reasoner.py`          | LLM local (Ollama) o heuristica; intenciones abstractas. |
 | `chat_bridge.py`           | LLM clasifica texto → estímulos (no genera charla). |
-| `chat_sim_session.py`      | Bucle simulacion + aprendizaje para el chat. |
-| `chat_fly_app.py`          | Ventana de chat (Tkinter) + panel multi-agente. |
-| `unified_fly_memory.py`    | Memoria compartida aprendible (reptil + plástico). |
-| `multi_agent_orchestrator.py` | Sub-agentes secuenciales + fusión + un paso de aprendizaje. |
+| `chat_sim_session.py`      | Bucle simulacion + aprendizaje (mosca; no es la app principal). |
+| `multi_agent_app.py`       | Chat Tk solo multi-agente + memoria en blanco (entrada principal). |
+| `chat_fly_app.py`          | Delega en `multi_agent_app`. |
+| `unified_fly_memory.py`    | Memoria compartida (`blank_init` opcional). |
+| `multi_agent_orchestrator.py` | Sub-agentes + fusión + aprendizaje sobre la memoria. |
 | `fly_voice.py`             | Frases del “cerebro” a partir de tensores (sin LLM). |
 | `data/`                    | CSV del conectoma. |
 | `results.png`              | Graficas generadas al final. |
