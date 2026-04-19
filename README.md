@@ -1,0 +1,127 @@
+# Mosca hibrida: conectoma real + red plastica expansiva
+
+Experimento que combina:
+
+1. **El conectoma real de _Drosophila melanogaster_** publicado por el
+   consorcio [FlyWire / Princeton Seung Lab (Nature 2024)](https://doi.org/10.1038/s41586-024-07558-y).
+   Se usa el snapshot publico `v783` (~139k neuronas, ~55M sinapsis)
+   como **red fija congelada**: los pesos sinapticos vienen de la
+   biologia, no se entrenan. Es el "instinto" de la mosca.
+
+2. **Una red expansiva en blanco** (`ExpansiveNetwork`) acoplada al
+   conectoma. Empieza con pesos ~0 y aprende por **refuerzo** (REINFORCE
+   con Adam) a asociar conceptos con acciones utiles. La pregunta del
+   experimento es: **¿se puebla sola? ¿aparecen nuevas sinapsis
+   funcionales a lo largo de la vida?**
+
+3. (Opcional) **Ollama** como "maestro" externo que ocasionalmente
+   sugiere una accion. No controla la mosca, solo sesga ligeramente los
+   logits.
+
+## Instalacion
+
+```bash
+pip install -r requirements.txt
+```
+
+Si quieres usar Ollama (opcional), instala [Ollama](https://ollama.com/) y baja un modelo:
+
+```bash
+ollama pull phi3
+```
+
+## Uso
+
+Modo rapido (conectoma sintetico, sin internet, util para validar):
+
+```bash
+python experiment.py --synthetic --no-llm
+```
+
+### Con el conectoma REAL de FlyWire (recomendado, ~72 MB en total)
+
+El endpoint publico de FlyWire exige login con Google, asi que la descarga
+100% automatica no funciona. Baja manualmente desde
+[codex.flywire.ai/api/download](https://codex.flywire.ai/api/download)
+**solo estos 3 archivos**:
+
+| archivo de FlyWire | tamaño | para que sirve |
+|---|---|---|
+| Connections (Filtered)                     | 68 MB   | matriz sinaptica pre->post con `syn_count` |
+| Neurotransmitter Type Predictions          | 1.7 MB  | signo excitatorio / inhibitorio (GABA, Gly, ACh, Glu, ...) |
+| Classification / Hierarchical Annotations  | 934 KB  | region anatomica (lobulo optico, mushroom body, ...) |
+
+Pasos:
+
+1. Descarga los 3 archivos y ponlos en `./data/` (pueden quedar como `.gz`,
+   el script se encarga).
+2. Conviertelos al formato que usa el proyecto:
+
+   ```bash
+   python prepare_flywire_data.py
+   ```
+
+   Esto genera `data/neurons.csv` y `data/connections.csv` ya procesados
+   (neurotransmisor + region anotados, aristas agrupadas).
+
+3. Corre el experimento con el conectoma real:
+
+   ```bash
+   python experiment.py --episodes 300 --fly-neurons 5000
+   ```
+
+**NO descargues** Synapse Table (2.6 GB), Neuron Skeletons (13 GB),
+Connections (Unfiltered, 277 MB), ni las versiones "Original Used Prior
+To July 2025": no se usan en este experimento.
+
+### Mas opciones
+
+```bash
+python experiment.py --episodes 500 --hidden 3000 --fly-neurons 3000
+python experiment.py --no-llm                # sin Ollama
+python experiment.py --synthetic             # forzar conectoma sintetico
+```
+
+## Archivos del proyecto
+
+| archivo | descripcion |
+|---|---|
+| `download_connectome.py`   | Intenta bajar FlyWire o genera un conectoma sintetico de respaldo. |
+| `prepare_flywire_data.py`  | Convierte los CSV crudos de FlyWire al formato del proyecto. |
+| `fly_brain.py`             | Carga el conectoma como matriz de pesos fija (`FlyConnectomeBrain`). |
+| `expansive_network.py`     | Red plastica en blanco (`ExpansiveNetwork`). |
+| `experiment.py`            | Bucle de refuerzo + graficas. |
+| `data/`                    | CSV del conectoma. |
+| `results.png`              | Graficas generadas al final. |
+
+## Metricas que miramos
+
+- **Recompensa por episodio** (aprende o no).
+- **% de sinapsis activas** en la red expansiva (|w| > 1e-3). Es la
+  **"poblacion" de la red en blanco**.
+- **Magnitud media y maxima de los pesos** en escala log, para ver
+  crecimiento de conexiones.
+- **Histograma final de pesos**: si parte gaussiana centrada en 0 y
+  termina long-tail, es evidencia de que algunas sinapsis se volvieron
+  dominantes, como en el cerebro real.
+
+## Notas tecnicas importantes
+
+- La version original del concepto inicializaba todos los pesos con
+  **exactamente 0** y usaba `ReLU`. Eso produce gradiente cero y la red
+  **no puede aprender nunca**. Aqui usamos un ruido gaussiano diminuto
+  (`std=1e-4`) + `LeakyReLU`: funcionalmente esta en blanco pero los
+  gradientes si fluyen, asi que podemos medir honestamente si
+  aparecen sinapsis fuertes.
+- Optimizador `Adam` con clipping (mas estable que SGD para RL policy
+  gradient).
+- La matriz sinaptica completa de FlyWire es grande; por defecto
+  submuestreamos a ~2500 neuronas (`--fly-neurons`). Puedes subirlo si
+  tienes RAM/VRAM.
+- Las neuronas GABA / glicinergicas se inyectan con signo negativo
+  (inhibitorias), las demas con signo positivo.
+
+## Referencia cientifica
+
+Dorkenwald, S., Matsliah, A., Sterling, A. R. et al. _Neuronal wiring
+diagram of an adult brain._ **Nature** 634, 124-138 (2024).
