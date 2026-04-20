@@ -47,6 +47,7 @@ version de Ollama, prueba `gemma2:2b` o `gemma2:1b` y pasalo con
 Modo rapido (conectoma sintetico, sin internet, util para validar):
 
 ```bash
+python multi_agent_app.py --llm-model gemma3:270m
 python experiment.py --synthetic --no-llm
 ```
 
@@ -96,18 +97,20 @@ python stats_simulation.py --llm --llm-model gemma3:270m --llm-every 30
 Sin Ollama o sin el modelo instalado, el razonador cae en reglas heuristicas
 equivalentes (mismo interfaz).
 
-### Chat multi-agente (`multi_agent_app.py`)
+### PlasticSwarm / autonomía por objetivo (`multi_agent_app.py`)
 
-Interfaz **solo** multi-agente: **sin conectoma**, sin simulación de mosca,
-sin descarga de datos al arrancar. Cada sub-agente y la fusión llaman al
-**mismo modelo** en tu Ollama local (`ollama serve` + modelo ya instalado;
-no se hace `pull` desde este script). Memoria compartida sintética en
-**blanco** (`SharedFlyMemory(..., blank_init=True)`): `mem` y núcleo reptil
-en cero; aprende el escritor plástico y la proyección de lectura.
+**Sin conectoma ni mosca.** Entrada = **objetivo** (texto). Flujo fijo:
+**Entiende** (único que ve el bruto) → **Planifica** → **Discuten** (N) →
+**Ejecutan** (M) → **Prueban** (K) → **Revisor** (`OBJETIVO_ALCANZADO`,
+`MOTIVO`, `RETROALIMENTACION`, `RESPUESTA_FINAL`). Si **NO**, nuevo ciclo con
+retro inyectada al planificador. Por ciclo: escribe en `SharedFlyMemory` y al
+cerrar el ciclo entrena una **red auxiliar** con el buffer y **vacía el buffer**.
+Pesos: `data/plastic_swarm.sqlite` (guardado al cerrar ventana y tras cada run).
+Carga inicial en **hilo en segundo plano** (`weights_ready`).
 
 ```bash
 python multi_agent_app.py
-python multi_agent_app.py --llm-model gemma3:270m --num-predict 180
+python multi_agent_app.py --llm-model gemma3:270m --max-cycles 5 --discuss 2 --execute 2 --test 2
 ```
 
 `python chat_fly_app.py` redirige al mismo programa (compatibilidad).
@@ -145,7 +148,9 @@ python experiment.py --synthetic             # forzar conectoma sintetico
 | `multi_agent_app.py`       | Chat Tk solo multi-agente + memoria en blanco (entrada principal). |
 | `chat_fly_app.py`          | Delega en `multi_agent_app`. |
 | `unified_fly_memory.py`    | Memoria compartida (`blank_init` opcional). |
-| `multi_agent_orchestrator.py` | Sub-agentes + fusión + aprendizaje sobre la memoria. |
+| `multi_agent_orchestrator.py` | LLM local + heurística + utilidades (embed, loss). |
+| `objective_agent_cycle.py`   | Pipeline + probadores + revisor + buffer→aux. |
+| `plastic_swarm_state.py`     | Buffer de ciclo, red auxiliar, SQLite persistencia. |
 | `fly_voice.py`             | Frases del “cerebro” a partir de tensores (sin LLM). |
 | `data/`                    | CSV del conectoma. |
 | `results.png`              | Graficas generadas al final. |
