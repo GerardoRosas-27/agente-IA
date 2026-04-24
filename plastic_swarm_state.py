@@ -19,6 +19,9 @@ from unified_fly_memory import SharedFlyMemory
 
 DEFAULT_DB = Path(__file__).resolve().parent / "data" / "plastic_swarm.sqlite"
 
+# Un solo checkpoint en BD: evita INSERT ilimitados y el crecimiento del fichero.
+_CHECKPOINT_ROW_ID = 1
+
 
 class CycleBuffer:
     """Buffer corto por ciclo: se vacía al cerrar el ciclo tras entrenar."""
@@ -105,18 +108,33 @@ class SwarmPlasticStore:
         bio_a = io.BytesIO()
         if aux is not None:
             torch.save(aux.state_dict(), bio_a)
+        created = time.strftime("%Y-%m-%dT%H:%M:%S")
+        mem_bytes = bio_m.getvalue()
+        aux_bytes = bio_a.getvalue()
+
         conn = sqlite3.connect(str(self.db_path))
-        conn.execute(
-            "INSERT INTO plastic_state (created, mem_blob, aux_blob, meta) VALUES (?,?,?,?)",
-            (
-                time.strftime("%Y-%m-%dT%H:%M:%S"),
-                bio_m.getvalue(),
-                bio_a.getvalue(),
-                "{}",
-            ),
-        )
-        conn.commit()
-        conn.close()
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO plastic_state (id, created, mem_blob, aux_blob, meta)
+                   VALUES (?,?,?,?,?)""",
+                (_CHECKPOINT_ROW_ID, created, mem_bytes, aux_bytes, "{}"),
+            )
+            cur = conn.execute(
+                "DELETE FROM plastic_state WHERE id != ?",
+                (_CHECKPOINT_ROW_ID,),
+            )
+            pruned = int(cur.rowcount or 0)
+            conn.commit()
+        finally:
+            conn.close()
+
+        if pruned > 0:
+            vac = sqlite3.connect(str(self.db_path))
+            try:
+                vac.isolation_level = None
+                vac.execute("VACUUM")
+            finally:
+                vac.close()
 
     def load_latest_into(
         self,

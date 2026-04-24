@@ -12,30 +12,49 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any
 
 import numpy as np
 
 from fly_world import FlyWorld
+
+# `ollama.chat` usa un Client() global con httpx.Client compartido; httpx no es
+# thread-safe. El pipeline multi-agente llama al LLM desde un Thread de Tk →
+# hay que usar un Client por hilo (mismo patrón recomendado por httpx).
+_ollama_tls = threading.local()
+
+
+def _thread_local_ollama_client() -> Any:
+    """Un `httpx.Client` por hilo (Ollama Python >= 0.3)."""
+    from ollama import Client
+
+    client = getattr(_ollama_tls, "client", None)
+    if client is None:
+        client = Client()
+        _ollama_tls.client = client
+    return client
 
 
 def local_llm_chat_call(
     model: str,
     messages: list,
     options: dict | None = None,
-) -> dict | None:
+) -> Any:
     """
-    Misma ruta que `LanguageBridge` para el modelo local: `ollama.chat`
-    contra el daemon en tu máquina (sin descargas desde aquí).
+    Cliente Ollama local (daemon). Devuelve ChatResponse del paquete `ollama`
+    o None si falla el import o la petición.
 
-    Si el import falla o el daemon no responde, devuelve `None` para que
-    el llamador use heurística sin tratarlo como error fatal.
+    No usar `ollama.chat` a nivel módulo desde hilos secundarios.
     """
     try:
-        import ollama
-
-        return ollama.chat(model=model, messages=messages, options=options or {})
+        return _thread_local_ollama_client().chat(
+            model=model,
+            messages=messages,
+            options=options or {},
+            stream=False,
+        )
     except Exception:
         return None
 
@@ -122,12 +141,13 @@ class BridgeResult:
 class LanguageBridge:
     def __init__(self, model: str = "gemma3:270m"):
         self.model = model
-        self._chat: Callable | None = None
+        self._ollama_available = False
         try:
-            import ollama
-            self._chat = ollama.chat
+            import ollama  # noqa: F401
+
+            self._ollama_available = True
         except ImportError:
-            self._chat = None
+            self._ollama_available = False
 
     def classify(self, user_text: str) -> BridgeResult:
         t = user_text.strip()
@@ -137,18 +157,19 @@ class LanguageBridge:
                 source="vacio",
                 raw_snippet="",
             )
-        if self._chat is None:
+        if not self._ollama_available:
             sc = heuristic_scores(t)
             return BridgeResult(scores=sc, source="heuristica", raw_snippet="")
 
         try:
-            resp = self._chat(
+            resp = _thread_local_ollama_client().chat(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": SYSTEM},
                     {"role": "user", "content": t},
                 ],
                 options={"temperature": 0.05, "num_predict": 120},
+                stream=False,
             )
             raw = resp["message"]["content"].strip()
             parsed = _parse_scores(raw)

@@ -12,7 +12,7 @@ import torch
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
 
-from chat_bridge import local_llm_chat_call
+from llm_api_client import resolve_llm_chat_for_pipeline
 
 from objective_agent_cycle import run_objective_pipeline
 from plastic_swarm_state import (
@@ -44,7 +44,11 @@ def _role_tag(role: str) -> str:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="PlasticSwarm — objetivo + memoria plástica.")
-    p.add_argument("--llm-model", default="gemma3:270m")
+    p.add_argument(
+        "--llm-model",
+        default="gemma3:270m",
+        help="Sin LLM_API_BASE_URL en .env: modelo Ollama. Con API remota: respaldo si falta LLM_MODEL.",
+    )
     p.add_argument("--mem-slots", type=int, default=6)
     p.add_argument("--mem-dim", type=int, default=64)
     p.add_argument("--num-predict", type=int, default=180)
@@ -54,6 +58,13 @@ def main() -> None:
     p.add_argument("--execute", type=int, default=2)
     p.add_argument("--test", type=int, default=1, help="Agentes probadores por ciclo.")
     args = p.parse_args()
+
+    try:
+        llm_chat_fn, llm_model_id, llm_backend_label = resolve_llm_chat_for_pipeline(
+            args.llm_model
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     device = torch.device("cpu")
 
@@ -83,7 +94,8 @@ def main() -> None:
             "Entrada: un OBJETIVO (texto). Flujo: Entiende → Planifica → Discuten → "
             "Ejecutan → Prueban → Revisor (SI/NO + retro). Cada ciclo: memoria compartida "
             "aprende; el buffer del ciclo entrena una red auxiliar y se vacía. "
-            "Al cerrar la ventana se guardan pesos en data/plastic_swarm.sqlite."
+            "Al cerrar la ventana se guardan pesos en data/plastic_swarm.sqlite. "
+            "El LLM puede ser Ollama local o una API (LM Studio) vía .env; ver README."
         ),
         wraplength=800,
         justify="left",
@@ -122,7 +134,12 @@ def main() -> None:
         log.insert(tk.END, body.rstrip() + "\n\n", tag)
         log.see(tk.END)
 
-    append("s", "[Sistema]", "Cargando pesos previos en segundo plano… Ejecutar cuando quieras.")
+    append(
+        "s",
+        "[Sistema]",
+        f"Cargando pesos previos en segundo plano… Ejecutar cuando quieras.\n"
+        f"LLM: {llm_backend_label} · modelo «{llm_model_id}»",
+    )
 
     row = tk.Frame(root, bg="#1a1d24")
     row.pack(fill="x", padx=10, pady=(0, 4))
@@ -210,8 +227,8 @@ def main() -> None:
                 final_txt, cycles, loss_v, ok = run_objective_pipeline(
                     goal,
                     shared_mem,
-                    args.llm_model,
-                    local_llm_chat_call,
+                    llm_model_id,
+                    llm_chat_fn,
                     cycle_buffer=cycle_buf,
                     plastic_aux=plastic_aux,
                     weights_ready=weights_ready,
@@ -231,7 +248,7 @@ def main() -> None:
                 st = "certificado" if ok else "fin por límite de ciclos"
                 append(
                     "r",
-                    "[Respuesta final]",
+                    "[Respuesta al usuario]",
                     f"({st}, ciclos={cycles}, loss memoria compartida={loss_v:.4f})\n\n{final_txt}",
                 )
                 try:

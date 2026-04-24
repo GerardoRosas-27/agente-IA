@@ -144,6 +144,13 @@ def run_objective_pipeline(
     if weights_ready is not None:
         weights_ready.wait(timeout=180)
 
+    log(
+        "Sistema",
+        f"LLM: modelo «{model}». Cada rol escribe abajo; al final "
+        "«Respuesta final» resume para el usuario. Si todo parece «[borrador local]», "
+        "no hubo respuesta del proveedor (API remota, Ollama o modelo incorrecto).",
+    )
+
     raw = raw_user_objective.strip()[:8000]
     slot = 0
 
@@ -164,6 +171,7 @@ def run_objective_pipeline(
         cycles_used = cyc + 1
         logb("Ciclo", f"═══ Ciclo {cyc + 1} / {max_cycles} ═══")
 
+        log("Sistema", "── Intérprete (formaliza objetivo y criterios) ──")
         sys_e = (
             "Eres el agente INTERPRETE. El usuario define un OBJETIVO (puede ser un objeto "
             "textual: producto, problema, meta).\n"
@@ -177,6 +185,7 @@ def run_objective_pipeline(
         obj_claro, criterios = parse_understanding(out_e, raw)
         crit_txt = "\n".join(f"- {x}" for x in criterios)
 
+        log("Sistema", "── Planificador (plan numerado) ──")
         ctx = _ctx_snip(memory, mem_cur, 0)
         extra = ""
         if motivo_prev or retro_prev:
@@ -197,6 +206,10 @@ def run_objective_pipeline(
         logb("Planifica", out_p)
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_p)
 
+        log(
+            "Sistema",
+            f"── Debate entre agentes ({max(1, int(n_discuss))} intervención(es)) ──",
+        )
         acc_d = []
         for i in range(max(1, int(n_discuss))):
             prev = "\n".join(acc_d[-2:]) if acc_d else "(nada aún)"
@@ -214,6 +227,10 @@ def run_objective_pipeline(
             acc_d.append(out_d)
         discuss_acc = "\n---\n".join(acc_d)
 
+        log(
+            "Sistema",
+            f"── Ejecución ({max(1, int(n_execute))} agente(s)) ──",
+        )
         acc_x = []
         for j in range(max(1, int(n_execute))):
             sys_x = (
@@ -231,6 +248,10 @@ def run_objective_pipeline(
             acc_x.append(out_x)
         execute_acc = "\n---\n".join(acc_x)
 
+        log(
+            "Sistema",
+            f"── Pruebas ({max(1, int(n_test))} probador(es)) ──",
+        )
         acc_t = []
         for k in range(max(1, int(n_test))):
             sys_t = (
@@ -247,6 +268,7 @@ def run_objective_pipeline(
             acc_t.append(out_t)
         test_acc = "\n---\n".join(acc_t)
 
+        log("Sistema", "── Revisor (veredicto + una RESPUESTA_FINAL al usuario) ──")
         sys_r = (
             "Eres el REVISOR FINAL. Con OBJETIVO_CLARO, criterios, plan, discusión, "
             "ejecución y pruebas, decide si el objetivo queda satisfecho.\n"

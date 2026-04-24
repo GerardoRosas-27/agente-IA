@@ -1,0 +1,32 @@
+.env
+.venv/
+venv/
+env/
+
+__pycache__/
+*.py[cod]
+.Python
+*.sqlite-journal
+
+# Pesos y caché de modelos (LM Studio, Ollama, Hugging Face, etc.) — no subir al repo
+models/
+Modelos/
+checkpoints/
+*.gguf
+*.ggml
+*.gguf.*
+*.safetensors
+*.mlpackage
+**/*.mlx
+*.ckpt
+*.h5
+*.hdf5
+*.npy
+
+# Caché típica al descargar modelos (HF, transformers)
+.cache/huggingface/
+.cache/llm/
+huggingface/
+
+# LM Studio: carpeta de descargas (Windows/macOS: nombre puede variar)
+# LM-Studio/

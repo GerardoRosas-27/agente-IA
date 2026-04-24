@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import torch
@@ -55,6 +55,41 @@ def _heuristic_llm_text(system: str, user: str) -> str:
     return user[:400]
 
 
+def _ollama_response_text(r: Any) -> str | None:
+    """
+    El paquete `ollama` moderno devuelve ChatResponse (Pydantic), no dict.
+    Antes solo se leía `dict` → siempre caía en heurística (texto tipo plantilla).
+
+    Algunos modelos con “thinking” pueden dejar `content` vacío y rellenar
+    `message.thinking`; lo usamos como respaldo.
+    """
+    if r is None:
+        return None
+    try:
+        msg = r["message"]
+    except Exception:
+        return None
+    if msg is None:
+        return None
+    try:
+        raw = msg["content"]
+    except Exception:
+        raw = None
+    if raw is not None:
+        t = str(raw).strip()
+        if t:
+            return t
+    try:
+        think = msg["thinking"]
+    except Exception:
+        think = getattr(msg, "thinking", None)
+    if think is not None:
+        t2 = str(think).strip()
+        if t2:
+            return t2
+    return None
+
+
 def _ollama(
     ollama_chat: Callable | None,
     model: str,
@@ -70,14 +105,11 @@ def _ollama(
                     {"role": "system", "content": system},
                     {"role": "user", "content": user[:12000]},
                 ],
-                options={"temperature": 0.35, "num_predict": int(num_predict)},
+                options={"temperature": 0.45, "num_predict": int(num_predict)},
             )
-            if isinstance(r, dict):
-                raw = (r.get("message") or {}).get("content")
-                if raw is not None:
-                    t = str(raw).strip()
-                    if t:
-                        return t
+            out = _ollama_response_text(r)
+            if out:
+                return out
         except Exception:
             pass
     return _heuristic_llm_text(system, user)

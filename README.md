@@ -113,6 +113,24 @@ python multi_agent_app.py
 python multi_agent_app.py --llm-model gemma3:270m --max-cycles 5 --discuss 2 --execute 2 --test 2
 ```
 
+#### LLM Studio (u otro servidor OpenAI-compatible) por API
+
+1. Copia `.env.example` a `.env` en la raíz del repo.
+2. En LM Studio, arranca el servidor local y copia la URL base (suele ser `http://127.0.0.1:1234/v1`).
+3. En `.env` define al menos:
+   - `LLM_API_BASE_URL` — esa URL base (con `/v1`).
+   - `LLM_MODEL` — el identificador del modelo que muestra LM Studio para la API.
+
+Si `LLM_API_BASE_URL` está definido, **no** se usa el daemon Ollama para esta app; las llamadas van a `…/v1/chat/completions`. Opcional: `LLM_API_KEY`, `LLM_HTTP_TIMEOUT`.
+
+**Si LM Studio no responde**, el cliente reintenta por defecto contra una API de prueba local (`LLM_TEST_API_BASE_URL`, por defecto `http://127.0.0.1:8765/v1`). Arranca el sustituto en otra terminal:
+
+```bash
+python llm_test_api_server.py
+```
+
+Desactivar el reintento: `LLM_TEST_FALLBACK=0` en `.env`.
+
 `python chat_fly_app.py` redirige al mismo programa (compatibilidad).
 
 Dependencias **opcionales** (LangGraph / LangChain, no usadas por esta app):
@@ -151,6 +169,8 @@ python experiment.py --synthetic             # forzar conectoma sintetico
 | `multi_agent_orchestrator.py` | LLM local + heurística + utilidades (embed, loss). |
 | `objective_agent_cycle.py`   | Pipeline + probadores + revisor + buffer→aux. |
 | `plastic_swarm_state.py`     | Buffer de ciclo, red auxiliar, SQLite persistencia. |
+| `llm_api_client.py`          | LM Studio / API OpenAI-compatible + fallback a API de prueba. |
+| `llm_test_api_server.py`     | Servidor HTTP mínimo (stdlib) si LM Studio no responde. |
 | `fly_voice.py`             | Frases del “cerebro” a partir de tensores (sin LLM). |
 | `data/`                    | CSV del conectoma. |
 | `results.png`              | Graficas generadas al final. |
