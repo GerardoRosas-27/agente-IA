@@ -8,6 +8,11 @@ __pycache__/
 .Python
 *.sqlite-journal
 
+# Conectoma y base local (muy pesados; generar con download_connectome / prepare_flywire_data)
+data/connections.csv
+data/connections_princeton.csv.gz
+data/plastic_swarm.sqlite
+
 # Pesos y caché de modelos (LM Studio, Ollama, Hugging Face, etc.) — no subir al repo
 models/
 Modelos/
