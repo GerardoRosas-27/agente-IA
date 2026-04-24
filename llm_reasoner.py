@@ -1,16 +1,7 @@
 """
-Razonamiento interno con LLM local (pesos INMOVIBLES).
+Razonamiento interno vía LLM (LM Studio, API OpenAI; pesos fijos en el servidor).
 
-No se entrena el modelo de lenguaje: solo inferencia (Ollama carga pesos
-fijos). La salida es un conjunto pequeno de INTENCIONES ABSTRACTAS que se
-codifican como vector one-hot y se inyectan en la capa plastica.
-
-Modelo recomendado (ligero, Google Gemma en Ollama):
-    ollama pull gemma3:270m
-    # alternativas: gemma2:2b, gemma2:1b
-
-Si Ollama no esta disponible, se usa un clasificador heuristico determinista
-basado en los mismos sensores que ve la mosca (sin "magia").
+La salida es intenciones abstractas (one-hot) inyectadas en la capa plástica.
 """
 from __future__ import annotations
 
@@ -22,6 +13,7 @@ from typing import Callable
 import numpy as np
 
 from fly_world import FlyWorld
+from llm_api_client import get_resolved_model, parse_assistant_message, remote_openai_chat
 
 INTENTS = [
     "buscar_comida",
@@ -65,35 +57,7 @@ def _parse_json_line(text: str) -> dict | None:
         return None
 
 
-def heuristic_intent(world: FlyWorld) -> tuple[int, float, str]:
-    """Replica reglas simples usando el mismo vector sensorial (11 dims)."""
-    s = world.sense()
-    food_p = float(s[0])
-    threat_p = float(s[4])
-    safe_p = float(s[8])
-    energy = float(s[9])
-    boundary = float(s[10])
-
-    if boundary > 0.75:
-        return _INTENT_INDEX["buscar_espacio_abierto"], 0.75, "heuristica"
-    if threat_p > 0.82:
-        return _INTENT_INDEX["huir_peligro"], 0.9, "heuristica"
-    if energy < 0.35 and safe_p > 0.55:
-        return _INTENT_INDEX["buscar_refugio"], 0.85, "heuristica"
-    if energy < 0.25:
-        return _INTENT_INDEX["ahorrar_energia"], 0.7, "heuristica"
-    if food_p > 0.65:
-        return _INTENT_INDEX["buscar_comida"], 0.8, "heuristica"
-    if threat_p > 0.55 and food_p < 0.4:
-        return _INTENT_INDEX["re_evaluar"], 0.55, "heuristica"
-    return _INTENT_INDEX["explorar_territorio"], 0.6, "heuristica"
-
-
 def intent_to_logits_bias(n_actions: int, intent_idx: int, confidence: float) -> np.ndarray:
-    """
-    Sesgo FIJO (no aprendible) de intencion -> acciones motoras.
-    La capa plastica aprende a COMBINAR esto con el conectoma; el LLM no cambia.
-    """
     bias = np.zeros(n_actions, dtype=np.float32)
     c = float(np.clip(confidence, 0.0, 1.0))
     scale = 0.55 * c
@@ -134,20 +98,18 @@ class ReasonerState:
 class FrozenLLMReasoner:
     def __init__(
         self,
-        model: str = "gemma3:270m",
+        model: str = "",
         n_actions: int = 16,
         timeout: float = 120.0,
     ):
-        self.model = model
+        self._model = (model or "").strip()
         self.n_actions = n_actions
         self.timeout = timeout
         self.state = ReasonerState()
-        self._ollama_chat: Callable | None = None
-        try:
-            import ollama as olm
-            self._ollama_chat = olm.chat
-        except ImportError:
-            self._ollama_chat = None
+        self._llm: Callable = remote_openai_chat
+
+    def _model_id(self) -> str:
+        return get_resolved_model(self._model)
 
     def _world_prompt(self, world: FlyWorld) -> str:
         s = world.sense()
@@ -164,29 +126,19 @@ class FrozenLLMReasoner:
         )
 
     def reason(self, world: FlyWorld) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Retorna:
-            intent_onehot: (len(INTENTS),) float32
-            logits_bias:   (n_actions,) float32  (sin gradiente; se suma en no_grad)
-        """
-        if self._ollama_chat is None:
-            idx, conf, src = heuristic_intent(world)
-            self._record(idx, conf, src, "")
-            vec = np.zeros(len(INTENTS), dtype=np.float32)
-            vec[idx] = 1.0
-            return vec, intent_to_logits_bias(self.n_actions, idx, conf)
-
         user = self._world_prompt(world)
         try:
-            resp = self._ollama_chat(
-                model=self.model,
-                messages=[
+            resp = self._llm(
+                self._model_id(),
+                [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user},
                 ],
                 options={"temperature": 0.1, "num_predict": 80},
             )
-            raw = resp["message"]["content"].strip()
+            raw = (parse_assistant_message(resp) or "").strip()
+            if not raw:
+                raise ValueError("respuesta vacia del LLM")
             self.state.last_raw = raw[:200]
             data = _parse_json_line(raw)
             if not data:
@@ -196,7 +148,7 @@ class FrozenLLMReasoner:
             if name not in _INTENT_INDEX:
                 raise ValueError(f"intent desconocido: {name}")
             idx = _INTENT_INDEX[name]
-            self._record(idx, conf, "ollama", raw)
+            self._record(idx, conf, "lm_studio", raw)
             vec = np.zeros(len(INTENTS), dtype=np.float32)
             vec[idx] = 1.0
             self.state.calls_ok += 1
@@ -204,11 +156,9 @@ class FrozenLLMReasoner:
         except Exception as exc:
             self.state.calls_fail += 1
             self.state.last_raw = str(exc)[:120]
-            idx, conf, src = heuristic_intent(world)
-            self._record(idx, conf, f"fallback({src})", "")
-            vec = np.zeros(len(INTENTS), dtype=np.float32)
-            vec[idx] = 1.0
-            return vec, intent_to_logits_bias(self.n_actions, idx, conf)
+            raise RuntimeError(
+                f"Razonador LLM: {exc}. Comprueba LM Studio y .env (LLM_API_BASE_URL, LLM_MODEL)."
+            ) from exc
 
     def _record(self, idx: int, conf: float, source: str, raw: str) -> None:
         self.state.last_intent = INTENTS[idx]

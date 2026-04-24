@@ -1,17 +1,9 @@
 """
-LLM vía API compatible con OpenAI (LM Studio, vLLM, etc.).
+LLM vía API compatible con OpenAI (LM Studio en la red local).
 
-Si LM Studio no responde, se puede reintentar contra una API de prueba local
-(`llm_test_api_server.py`) — ver `LLM_TEST_API_BASE_URL` y `LLM_TEST_FALLBACK`.
-
-Variables de entorno (típicamente en `.env` en la raíz del proyecto):
-  LLM_API_BASE_URL   — LM Studio, p.ej. http://127.0.0.1:1234/v1
-  LLM_MODEL          — Modelo expuesto por el servidor
-  LLM_API_KEY        — Opcional; Bearer si no está vacío
-  LLM_HTTP_TIMEOUT   — Segundos (por defecto 300)
-  LLM_MAX_TOKENS     — Por defecto 512; -1 pasa "sin tope" (p.ej. LM Studio en /v1/chat/completions)
-  LLM_TEST_API_BASE_URL — Base del API de prueba (por defecto http://127.0.0.1:8765/v1)
-  LLM_TEST_FALLBACK  — 1 (defecto) intentar API de prueba si falla el principal; 0 desactiva
+Solo conexión HTTP a `…/v1/chat/completions`. Valores por defecto si faltan en .env:
+  base:  http://192.168.0.12:1234/v1
+  modelo: xiaomi-mimo-vl-miloco-7b (ajusta en .env: LLM_API_BASE_URL, LLM_MODEL)
 """
 from __future__ import annotations
 
@@ -22,6 +14,10 @@ from typing import Any, Callable
 
 import requests
 
+# LM Studio (misma red que el PC con el servidor; cambia en .env si aplica)
+DEFAULT_LLM_API_BASE_URL = "http://192.168.0.12:1234/v1"
+DEFAULT_LLM_MODEL = "xiaomi-mimo-vl-miloco-7b"
+
 _ENV_LOADED = False
 
 
@@ -29,43 +25,90 @@ def _load_env_file() -> None:
     """Carga `.env` sin dependencias externas (no sobrescribe variables ya definidas)."""
     global _ENV_LOADED
     if _ENV_LOADED:
+        _ensure_llm_defaults()
         return
     _ENV_LOADED = True
     path = Path(__file__).resolve().parent / ".env"
-    if not path.is_file():
-        return
-    try:
-        raw = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return
-    for line in raw.splitlines():
-        s = line.strip()
-        if not s or s.startswith("#"):
-            continue
-        if "=" not in s:
-            continue
-        key, _, val = s.partition("=")
-        key = key.strip()
-        if not key or key in os.environ:
-            continue
-        val = val.strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
-            val = val[1:-1]
-        os.environ[key] = val
+    if path.is_file():
+        try:
+            raw = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            raw = ""
+        for line in raw.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if "=" not in s:
+                continue
+            key, _, val = s.partition("=")
+            key = key.strip()
+            if not key or key in os.environ:
+                continue
+            val = val.strip()
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+                val = val[1:-1]
+            os.environ[key] = val
+    _ensure_llm_defaults()
+
+
+def _ensure_llm_defaults() -> None:
+    if not (os.getenv("LLM_API_BASE_URL", "").strip()):
+        os.environ["LLM_API_BASE_URL"] = DEFAULT_LLM_API_BASE_URL
+    if not (os.getenv("LLM_MODEL", "").strip()):
+        os.environ["LLM_MODEL"] = DEFAULT_LLM_MODEL
 
 
 def is_remote_llm_configured() -> bool:
     _load_env_file()
-    return bool(os.getenv("LLM_API_BASE_URL", "").strip())
+    return bool((os.getenv("LLM_API_BASE_URL") or "").strip())
 
 
-def _test_fallback_enabled() -> bool:
-    v = (os.getenv("LLM_TEST_FALLBACK") or "1").strip().lower()
-    return v not in ("0", "false", "no", "off")
+def get_resolved_model(cli_fallback: str = "") -> str:
+    """Modelo: env LLM_MODEL, luego `cli_fallback`, luego el por defecto de LM Studio."""
+    _load_env_file()
+    m = (os.getenv("LLM_MODEL") or "").strip()
+    if m:
+        return m
+    c = (cli_fallback or "").strip()
+    if c:
+        return c
+    return DEFAULT_LLM_MODEL
 
 
-def _fallback_base() -> str:
-    return (os.getenv("LLM_TEST_API_BASE_URL") or "http://127.0.0.1:8765/v1").strip().rstrip("/")
+def parse_assistant_message(r: Any) -> str | None:
+    """
+    Extrae texto de {"message": {"content": "..."}} (OpenAI) u objetos tipo respuesta
+    con .message. Algunos modelos rellenan "thinking" si content está vacío.
+    """
+    if r is None:
+        return None
+    if isinstance(r, dict):
+        try:
+            msg = r["message"]
+        except (KeyError, TypeError):
+            return None
+    else:
+        msg = getattr(r, "message", None)
+    if msg is None:
+        return None
+    if isinstance(msg, dict):
+        raw = msg.get("content")
+        think = msg.get("thinking")
+    else:
+        try:
+            raw = msg["content"]  # type: ignore[index]
+        except (KeyError, TypeError, AttributeError):
+            raw = getattr(msg, "content", None)
+        think = getattr(msg, "thinking", None)
+    if raw is not None:
+        t = str(raw).strip()
+        if t:
+            return t
+    if think is not None:
+        t2 = str(think).strip()
+        if t2:
+            return t2
+    return None
 
 
 def _post_chat_completions(
@@ -149,65 +192,29 @@ def remote_openai_chat(
     options: dict | None = None,
 ) -> dict | None:
     """
-    POST /chat/completions al servidor principal; si falla, al API de prueba (si está activo).
-    Devuelve dict compatible con `_ollama_response_text`.
+    POST /v1/chat/completions al único servidor configurado (LLM_API_BASE_URL).
     """
     _load_env_file()
-    primary = os.getenv("LLM_API_BASE_URL", "").strip().rstrip("/")
+    primary = (os.getenv("LLM_API_BASE_URL") or DEFAULT_LLM_API_BASE_URL).strip().rstrip("/")
     if not primary:
         return None
 
     main_timeout = float(os.getenv("LLM_HTTP_TIMEOUT", "300") or "300")
     api_key = (os.getenv("LLM_API_KEY") or "").strip()
-
-    out = _post_chat_completions(
-        primary, model, messages, options, timeout=main_timeout, api_key=api_key
-    )
-    if out is not None:
-        return out
-
-    if not _test_fallback_enabled():
-        return None
-
-    fb = _fallback_base()
-    if fb.rstrip("/") == primary.rstrip("/"):
-        return None
-
-    fb_timeout = float(os.getenv("LLM_TEST_HTTP_TIMEOUT", "12") or "12")
-    # La API de prueba no requiere la misma clave que LM Studio
     return _post_chat_completions(
-        fb,
-        model,
-        messages,
-        options,
-        timeout=fb_timeout,
-        api_key="",
+        primary, model, messages, options, timeout=main_timeout, api_key=api_key
     )
 
 
 def resolve_llm_chat_for_pipeline(cli_model: str) -> tuple[Callable[..., Any], str, str]:
     """
-    Retorna (callable_chat, model_id, etiqueta_backend).
-
-    Si `LLM_API_BASE_URL` está definido, usa la API remota y el modelo
-    `LLM_MODEL` (o `--llm-model` como respaldo).
-    Si no, usa Ollama local con `cli_model`.
+    Retorna (remote_openai_chat, model_id, etiqueta).
+    Siempre la API de LM Studio (URL y modelo vía .env; hay valores por defecto en código).
     """
     _load_env_file()
-    if is_remote_llm_configured():
-        env_model = (os.getenv("LLM_MODEL") or "").strip()
-        model_id = env_model or (cli_model or "").strip()
-        if not model_id:
-            raise ValueError(
-                "Con LLM_API_BASE_URL definido hace falta LLM_MODEL en el entorno "
-                "(o pasa --llm-model como respaldo)."
-            )
-        return (
-            remote_openai_chat,
-            model_id,
-            "API (LM Studio / OpenAI; si falla → API de prueba local si está activa)",
-        )
-    from chat_bridge import local_llm_chat_call
-
-    m = (cli_model or "gemma3:270m").strip()
-    return local_llm_chat_call, m, "Ollama (local)"
+    model_id = get_resolved_model(cli_model)
+    return (
+        remote_openai_chat,
+        model_id,
+        "LM Studio (API OpenAI)",
+    )

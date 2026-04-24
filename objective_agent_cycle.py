@@ -119,7 +119,7 @@ def run_objective_pipeline(
     raw_user_objective: str,
     memory: SharedFlyMemory,
     model: str,
-    ollama_chat: Callable | None,
+    llm_chat: Callable[..., object],
     *,
     cycle_buffer: CycleBuffer,
     plastic_aux: BufferPlasticNet | None = None,
@@ -146,9 +146,9 @@ def run_objective_pipeline(
 
     log(
         "Sistema",
-        f"LLM: modelo «{model}». Cada rol escribe abajo; al final "
-        "«Respuesta final» resume para el usuario. Si todo parece «[borrador local]», "
-        "no hubo respuesta del proveedor (API remota, Ollama o modelo incorrecto).",
+        f"LLM: modelo «{model}» (LM Studio). Cada rol escribe abajo; al final "
+        "«Respuesta final» resume para el usuario. Si el pipeline falla, comprobar "
+        "el servidor y .env (LLM_API_BASE_URL, LLM_MODEL).",
     )
 
     raw = raw_user_objective.strip()[:8000]
@@ -179,7 +179,7 @@ def run_objective_pipeline(
             "Formato:\nOBJETIVO_CLARO: ...\nCRITERIO_1: ...\nCRITERIO_2: ...\n"
         )
         user_e = f"Entrada bruta (solo para ti):\n{raw}"
-        out_e = _ollama(ollama_chat, model, sys_e, user_e, num_predict=num_predict + 40)
+        out_e = _ollama(llm_chat, model, sys_e, user_e, num_predict=num_predict + 40)
         logb("Entiende", out_e)
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_e)
         obj_claro, criterios = parse_understanding(out_e, raw)
@@ -202,7 +202,7 @@ def run_objective_pipeline(
             f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n{extra}\n"
             f"Memoria (parcial): {ctx}\nPLAN:"
         )
-        out_p = _ollama(ollama_chat, model, sys_p, user_p, num_predict=num_predict + 60)
+        out_p = _ollama(llm_chat, model, sys_p, user_p, num_predict=num_predict + 60)
         logb("Planifica", out_p)
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_p)
 
@@ -221,7 +221,7 @@ def run_objective_pipeline(
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nPLAN:\n{out_p[:3500]}\n\n"
                 f"Voces recientes:\n{prev}\n\nMemoria: {_ctx_snip(memory, mem_cur, i)}\nTu aporte:"
             )
-            out_d = _ollama(ollama_chat, model, sys_d, user_d, num_predict=num_predict)
+            out_d = _ollama(llm_chat, model, sys_d, user_d, num_predict=num_predict)
             logb(f"Discute{i + 1}", out_d)
             mem_cur = _mem_step(memory, mem_cur, step_slot(), out_d)
             acc_d.append(out_d)
@@ -242,7 +242,7 @@ def run_objective_pipeline(
                 f"DISCUSIÓN:\n{discuss_acc[:2500]}\n\n"
                 f"Memoria: {_ctx_snip(memory, mem_cur, j + 2)}\nTu entrega:"
             )
-            out_x = _ollama(ollama_chat, model, sys_x, user_x, num_predict=num_predict + 40)
+            out_x = _ollama(llm_chat, model, sys_x, user_x, num_predict=num_predict + 40)
             logb(f"Ejecuta{j + 1}", out_x)
             mem_cur = _mem_step(memory, mem_cur, step_slot(), out_x)
             acc_x.append(out_x)
@@ -262,7 +262,7 @@ def run_objective_pipeline(
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nEJECUCIÓN:\n{execute_acc[:3500]}\n\n"
                 f"Memoria: {_ctx_snip(memory, mem_cur, k + 4)}\nTu informe de prueba:"
             )
-            out_t = _ollama(ollama_chat, model, sys_t, user_t, num_predict=num_predict + 30)
+            out_t = _ollama(llm_chat, model, sys_t, user_t, num_predict=num_predict + 30)
             logb(f"Prueba{k + 1}", out_t)
             mem_cur = _mem_step(memory, mem_cur, step_slot(), out_t)
             acc_t.append(out_t)
@@ -284,7 +284,7 @@ def run_objective_pipeline(
             f"EJECUCIÓN:\n{execute_acc[:1800]}\n\nPRUEBAS:\n{test_acc[:1800]}\n"
         )
         out_r = _ollama(
-            ollama_chat,
+            llm_chat,
             model,
             sys_r,
             user_r,

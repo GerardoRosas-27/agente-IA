@@ -11,7 +11,7 @@ Pregunta cientifica:
 Uso:
     python experiment.py                      # corrida estandar
     python experiment.py --episodes 500 --hidden 3000
-    python experiment.py --no-llm             # sin sugerencias de Ollama
+    python experiment.py --no-llm             # sin sugerencias de LM Studio
     python experiment.py --synthetic          # fuerza conectoma sintetico
 """
 from __future__ import annotations
@@ -58,13 +58,19 @@ def maybe_llm_hint(concept: str, use_llm: bool) -> str:
     if not use_llm:
         return ""
     try:
-        import ollama
+        from llm_api_client import get_resolved_model, parse_assistant_message, remote_openai_chat
+        model = get_resolved_model("")
         prompt = (
             f"Una mosca percibe el estimulo '{concept}'. Responde con UNA "
             f"sola palabra de esta lista: {', '.join(ACTIONS)}."
         )
-        resp = ollama.chat(model="phi3", messages=[{"role": "user", "content": prompt}])
-        return resp["message"]["content"].strip().lower()
+        resp = remote_openai_chat(
+            model,
+            [{"role": "user", "content": prompt}],
+            options={"temperature": 0.3, "num_predict": 32},
+        )
+        t = parse_assistant_message(resp) or ""
+        return t.strip().lower()
     except Exception:
         return ""
 
@@ -236,7 +242,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--fly-neurons", type=int, default=2500,
                    help="submuestrear el conectoma para acelerar")
     p.add_argument("--no-llm", action="store_true",
-                   help="desactivar sugerencias de Ollama")
+                   help="desactivar sugerencias vía LM Studio (API en .env)")
     p.add_argument("--synthetic", action="store_true",
                    help="forzar conectoma sintetico (no descargar)")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")

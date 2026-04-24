@@ -1,14 +1,14 @@
 """
-Generacion de preguntas de la mosca: el LLM solo 'articula' lo que la red
-plastica elige (tema + matices). Los pesos del LLM siguen congelados.
-
-Si Ollama no esta, se usa solo el tema semilla aprendido (lexicon).
+Preguntas de la mosca: el LLM solo articula lo que elige la red (tema + matices).
+Solo API LM Studio: (model, messages, options) → respuesta vía `remote_openai_chat`.
 """
 from __future__ import annotations
 
 from typing import Callable
 
-# Semillas fijas; lo APRENDIBLE es cual indice elige la red (distribucion).
+from llm_api_client import parse_assistant_message
+
+# Semillas; lo aprendible es qué índice elige la red
 QUESTION_LEXICON = [
     "el olor que viene y se va",
     "una sombra que no tiene nombre",
@@ -97,23 +97,20 @@ def generate_fly_question(
     model: str,
     lexicon_idx: int,
     inst_vec: list[float],
-    ollama_chat: Callable | None,
+    llm_chat: Callable[..., object],
 ) -> str:
-    tema = QUESTION_LEXICON[lexicon_idx % len(QUESTION_LEXICON)]
-    if ollama_chat is None:
-        return f"…¿qué pasa con {tema}?"
-    try:
-        msgs = build_question_messages(lexicon_idx, inst_vec)
-        resp = ollama_chat(
-            model=model,
-            messages=msgs,
-            options={"temperature": 0.65, "num_predict": 80},
-        )
-        text = resp["message"]["content"].strip().split("\n")[0].strip()
-        if len(text) < 4:
-            raise ValueError("vacío")
-        if "?" not in text:
-            text = text.rstrip(".") + "?"
-        return text
-    except Exception:
-        return f"…¿qué pasa con {tema}?"
+    msgs = build_question_messages(lexicon_idx, inst_vec)
+    resp = llm_chat(
+        model=model,
+        messages=msgs,
+        options={"temperature": 0.65, "num_predict": 80},
+    )
+    text = (parse_assistant_message(resp) or "").strip()
+    if not text:
+        raise RuntimeError("LM Studio no devolvió texto para la pregunta de la mosca.")
+    line = text.split("\n")[0].strip()
+    if len(line) < 4:
+        raise RuntimeError("Respuesta demasiado corta del LLM para la pregunta.")
+    if "?" not in line:
+        line = line.rstrip(".") + "?"
+    return line

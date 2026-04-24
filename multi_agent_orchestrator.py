@@ -1,7 +1,6 @@
 """
-Orquestador: hasta 5 sub-agentes (LLM pequeño) que leen/escriben en
-SharedFlyMemory y devuelven una respuesta unificada. Un paso de aprendizaje
-conjunto sobre la memoria compartida (reptil + plastico).
+Orquestador: sub-agentes que leen/escriben en SharedFlyMemory. Solo LLM vía
+API OpenAI (LM Studio); no hay heurísticos ni Ollama local.
 """
 from __future__ import annotations
 
@@ -11,6 +10,12 @@ from typing import Any, Callable
 
 import numpy as np
 import torch
+
+from llm_api_client import parse_assistant_message
+
+# Compat. pruebas antiguas
+_ollama_response_text = parse_assistant_message
+assistant_message_text = parse_assistant_message
 
 
 def text_hash_embed(text: str, dim: int, device: torch.device | str = "cpu") -> torch.Tensor:
@@ -31,85 +36,42 @@ def syntax_score(code: str) -> float:
         return 0.0
 
 
-def _heuristic_llm_text(system: str, user: str) -> str:
-    """Respuesta de respaldo (mismo criterio que el puente sin red)."""
-    if "fusiona" in system.lower():
-        parts = user.split("PROPUESTAS:", 1)
-        if len(parts) > 1:
-            body = parts[1].strip()
-            chunks = [c.strip() for c in body.split("---") if c.strip()]
-            merged = "\n\n".join(chunks[:12])[:4000]
-            return (
-                "[borrador local — fusión]\n\n" + merged
-                if merged
-                else "[borrador local] Sin propuestas para fusionar."
-            )
-    if "TAREA:" in user:
-        task = user.split("TAREA:", 1)[1].split("LECTURA", 1)[0].strip()[:400]
-        return (
-            "[borrador local]\n"
-            f"# Aporte\n"
-            f"- Objetivo: {task}\n"
-            "```python\ndef esqueleto():\n    raise NotImplementedError\n```"
-        )
-    return user[:400]
-
-
-def _ollama_response_text(r: Any) -> str | None:
-    """
-    El paquete `ollama` moderno devuelve ChatResponse (Pydantic), no dict.
-    Antes solo se leía `dict` → siempre caía en heurística (texto tipo plantilla).
-
-    Algunos modelos con “thinking” pueden dejar `content` vacío y rellenar
-    `message.thinking`; lo usamos como respaldo.
-    """
-    if r is None:
-        return None
-    try:
-        msg = r["message"]
-    except Exception:
-        return None
-    if msg is None:
-        return None
-    try:
-        raw = msg["content"]
-    except Exception:
-        raw = None
-    if raw is not None:
-        t = str(raw).strip()
-        if t:
-            return t
-    try:
-        think = msg["thinking"]
-    except Exception:
-        think = getattr(msg, "thinking", None)
-    if think is not None:
-        t2 = str(think).strip()
-        if t2:
-            return t2
-    return None
-
-
-def _ollama(
-    ollama_chat: Callable | None,
+def call_llm(
+    llm_chat: Callable[..., Any],
     model: str,
     system: str,
     user: str,
     num_predict: int = 350,
 ) -> str:
-    if ollama_chat is not None:
-        try:
-            r = ollama_chat(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user[:12000]},
-                ],
-                options={"temperature": 0.45, "num_predict": int(num_predict)},
-            )
-            out = _ollama_response_text(r)
-            if out:
-                return out
-        except Exception:
-            pass
-    return _heuristic_llm_text(system, user)
+    try:
+        r = llm_chat(
+            model,
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user[:12000]},
+            ],
+            {"temperature": 0.45, "num_predict": int(num_predict)},
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Error de red o LM Studio: {exc}"
+        ) from exc
+    out = parse_assistant_message(r)
+    if out:
+        return out
+    raise RuntimeError(
+        "LM Studio no devolvió texto. Revisa servidor, modelo, LLM_API_BASE_URL y LLM_MODEL en .env."
+    )
+
+
+# Nombre usado en imports antiguos; delega a call_llm
+def _ollama(
+    llm_chat: Callable[..., Any] | None,
+    model: str,
+    system: str,
+    user: str,
+    num_predict: int = 350,
+) -> str:
+    if llm_chat is None:
+        raise RuntimeError("Falta la función de chat LM Studio (configuración interna).")
+    return call_llm(llm_chat, model, system, user, num_predict=num_predict)

@@ -46,8 +46,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description="PlasticSwarm — objetivo + memoria plástica.")
     p.add_argument(
         "--llm-model",
-        default="gemma3:270m",
-        help="Sin LLM_API_BASE_URL en .env: modelo Ollama. Con API remota: respaldo si falta LLM_MODEL.",
+        default="",
+        help="Sobrescribe LLM_MODEL de .env si se indica (LM Studio, misma base URL).",
     )
     p.add_argument("--mem-slots", type=int, default=6)
     p.add_argument("--mem-dim", type=int, default=64)
@@ -59,12 +59,9 @@ def main() -> None:
     p.add_argument("--test", type=int, default=1, help="Agentes probadores por ciclo.")
     args = p.parse_args()
 
-    try:
-        llm_chat_fn, llm_model_id, llm_backend_label = resolve_llm_chat_for_pipeline(
-            args.llm_model
-        )
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
+    llm_chat_fn, llm_model_id, llm_backend_label = resolve_llm_chat_for_pipeline(
+        args.llm_model
+    )
 
     device = torch.device("cpu")
 
@@ -95,7 +92,7 @@ def main() -> None:
             "Ejecutan → Prueban → Revisor (SI/NO + retro). Cada ciclo: memoria compartida "
             "aprende; el buffer del ciclo entrena una red auxiliar y se vacía. "
             "Al cerrar la ventana se guardan pesos en data/plastic_swarm.sqlite. "
-            "El LLM puede ser Ollama local o una API (LM Studio) vía .env; ver README."
+            "Solo LLM vía API LM Studio (.env: LLM_API_BASE_URL, LLM_MODEL)."
         ),
         wraplength=800,
         justify="left",

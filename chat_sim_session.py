@@ -20,6 +20,7 @@ import torch
 
 from chat_bridge import BridgeResult, LanguageBridge
 from download_connectome import ensure_connectome
+from llm_api_client import get_resolved_model, remote_openai_chat
 from expansive_network import ExpansiveNetwork
 from fly_brain import FlyConnectomeBrain
 from fly_question_llm import QUESTION_LEXICON, generate_fly_question
@@ -55,7 +56,7 @@ class FlyChatSession:
         device: str = "cpu",
         seed: int = 11,
         world_size: float = 20.0,
-        llm_bridge_model: str = "gemma3:270m",
+        llm_bridge_model: str = "",
         force_synthetic: bool = False,
         blank_fly_brain: bool = False,
         fly_lr: float = 3e-5,
@@ -64,7 +65,7 @@ class FlyChatSession:
         np.random.seed(seed)
         self.rng = np.random.default_rng(seed)
         self.device = device
-        self.llm_model = llm_bridge_model
+        self.llm_model = get_resolved_model(llm_bridge_model)
 
         ensure_connectome(force_synthetic=force_synthetic, n_neurons=5000)
         self.fly = FlyConnectomeBrain(
@@ -88,13 +89,8 @@ class FlyChatSession:
         ).to(device)
 
         self.world = FlyWorld(size=world_size, seed=seed)
-        self.bridge = LanguageBridge(model=llm_bridge_model)
-
-        try:
-            import ollama
-            self._ollama_chat = ollama.chat
-        except ImportError:
-            self._ollama_chat = None
+        self.bridge = LanguageBridge(model=self.llm_model)
+        self._llm_chat = remote_openai_chat
 
         self.intent_vec = np.zeros(self.n_intents, dtype=np.float32)
         self.last_action = 0
@@ -112,9 +108,8 @@ class FlyChatSession:
         self.question_queue: deque[str] = deque()
 
     @property
-    def ollama_chat(self) -> Callable | None:
-        """Mismo cliente Ollama que usa el puente y las preguntas (multi-agente)."""
-        return self._ollama_chat
+    def llm_chat(self) -> Callable[..., object]:
+        return self._llm_chat
 
     def drain_question_queue(self) -> list[str]:
         out = []
@@ -279,13 +274,13 @@ class FlyChatSession:
         self.steps_since_user = 0
 
         model = self.llm_model
-        oc = self._ollama_chat
+        lc = self._llm_chat
 
         def worker() -> None:
             try:
-                text = generate_fly_question(model, q_idx, inst_list, oc)
-            except Exception:
-                text = "…¿hay algo nuevo en el aire?"
+                text = generate_fly_question(model, q_idx, inst_list, lc)
+            except Exception as e:
+                text = f"…(LLM: {e})"
             try:
                 on_text(text)
             finally:

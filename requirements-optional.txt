@@ -19,7 +19,7 @@
 # =============================================================================
 
 # Dependencias opcionales (multi-agente avanzado, grafos, orquestación).
-# No son necesarias para chat_fly_app.py ni el orquestador local con Ollama.
+# No son necesarias para chat_fly_app.py / orquestador con LM Studio (API).
 #
 #   pip install -r requirements-optional.txt
 #

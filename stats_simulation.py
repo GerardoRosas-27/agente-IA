@@ -6,7 +6,7 @@ Arquitectura:
         |                                          ^
         | actividad motora                          | sensores
         v                                          |
-    RAZONAMIENTO INTERNO (LLM local, pesos CONGELADOS; solo inferencia)
+    RAZONAMIENTO INTERNO (LM Studio vía API, pesos CONGELADOS en el servidor)
         |  intenciones abstractas (JSON) + sesgo fijo sobre logits
         v
     CAPA PLASTICA (red en blanco, APRENDE por refuerzo)
@@ -22,11 +22,10 @@ La mosca aprende sola a:
 
 Uso:
     python stats_simulation.py
-    python stats_simulation.py --llm --llm-model gemma3:270m --llm-every 30
+    python stats_simulation.py --llm --llm-every 30
     python stats_simulation.py --max-steps 10000 --fly-neurons 5000
 
-Requisito LLM local: instalar Ollama y ejecutar p. ej.:
-    ollama pull gemma3:270m
+Requisito con --llm: LM Studio (o similar) con API OpenAI, URL en .env (p. ej. LLM_API_BASE_URL, LLM_MODEL). Hay valores por defecto en el código (red local 192.168.0.12:1234).
 """
 from __future__ import annotations
 
@@ -269,7 +268,7 @@ def run(
     device: str = "cpu",
     seed: int = 7,
     use_llm: bool = False,
-    llm_model: str = "gemma3:270m",
+    llm_model: str = "",
     llm_every: int = 30,
 ) -> None:
 
@@ -330,8 +329,8 @@ def run(
     print(f"Acciones motoras     : {len(ACTIONS)}  {', '.join(ACTIONS[:4])}...")
     print(f"Capa plastica        : {state_dim} -> {hidden} -> {len(ACTIONS)}")
     if reasoner:
-        print(f"LLM razonador (fijo): modelo={llm_model!r}  cada {llm_every} pasos  "
-              f"(Ollama; sin entrenamiento en linea)")
+        print(f"LLM razonador (fijo): modelo/entorno  cada {llm_every} pasos  "
+              f"(LM Studio; sin entrenamiento en linea). Ver .env: LLM_API_BASE_URL, LLM_MODEL")
     else:
         print("LLM razonador        : desactivado")
     print(f"Iniciando en 1s...")
@@ -353,7 +352,11 @@ def run(
             safe_before = world.rested_safe
 
             if reasoner is not None and (step == 1 or step % llm_every == 0):
-                last_intent_vec, last_llm_bias = reasoner.reason(world)
+                try:
+                    last_intent_vec, last_llm_bias = reasoner.reason(world)
+                except RuntimeError as err:
+                    sys.stderr.write(f"\n[LLM] {err}\n(Se mantienen intencion y sesgo anteriores.)\n\n")
+                    sys.stderr.flush()
 
             with torch.no_grad():
                 sensory = build_sensory(world, n_sensory, rng)
@@ -524,9 +527,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--llm", action="store_true",
-                   help="activar razonamiento interno via Ollama (pesos del LLM congelados)")
-    p.add_argument("--llm-model", default="gemma3:270m",
-                   help="modelo Ollama pequeno, ej: gemma3:270m, gemma2:2b, gemma2:1b")
+                   help="activar razonamiento interno vía LM Studio (API /v1, pesos fijos en servidor)")
+    p.add_argument("--llm-model", default="",
+                   help="sobrescribe LLM_MODEL de .env si se indica")
     p.add_argument("--llm-every", type=int, default=30,
                    help="cada cuantos pasos se reconsulta el LLM")
     return p.parse_args()
