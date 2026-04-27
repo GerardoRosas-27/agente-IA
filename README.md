@@ -105,8 +105,11 @@ equivalentes (mismo interfaz).
 `MOTIVO`, `RETROALIMENTACION`, `RESPUESTA_FINAL`). Si **NO**, nuevo ciclo con
 retro inyectada al planificador. Por ciclo: escribe en `SharedFlyMemory` y al
 cerrar el ciclo entrena una **red auxiliar** con el buffer y **vacía el buffer**.
-Pesos: `data/plastic_swarm.sqlite` (guardado al cerrar ventana y tras cada run).
-Carga inicial en **hilo en segundo plano** (`weights_ready`).
+El aprendizaje por ciclo minimiza **energía libre** (`sorpresa predictiva +
+complejidad - entropía útil`) para que la memoria en blanco aprenda sin
+colapsar a ceros. Pesos y estado de optimizadores:
+`data/plastic_swarm.sqlite` (guardado tras cada ciclo, tras cada run y al cerrar
+ventana). Carga inicial en **hilo en segundo plano** (`weights_ready`).
 
 ```bash
 python multi_agent_app.py

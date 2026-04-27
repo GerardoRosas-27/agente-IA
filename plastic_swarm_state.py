@@ -102,12 +102,27 @@ class SwarmPlasticStore:
         conn.commit()
         conn.close()
 
+    def _pack_memory(self, memory: SharedFlyMemory) -> dict:
+        return {
+            "version": 2,
+            "model": memory.state_dict(),
+            "optimizer": memory.optimizer.state_dict(),
+        }
+
+    def _pack_aux(self, aux: BufferPlasticNet | None) -> dict:
+        if aux is None:
+            return {"version": 2, "model": None, "optimizer": None}
+        return {
+            "version": 2,
+            "model": aux.state_dict(),
+            "optimizer": aux.opt.state_dict(),
+        }
+
     def save(self, memory: SharedFlyMemory, aux: BufferPlasticNet | None) -> None:
         bio_m = io.BytesIO()
-        torch.save(memory.state_dict(), bio_m)
+        torch.save(self._pack_memory(memory), bio_m)
         bio_a = io.BytesIO()
-        if aux is not None:
-            torch.save(aux.state_dict(), bio_a)
+        torch.save(self._pack_aux(aux), bio_a)
         created = time.strftime("%Y-%m-%dT%H:%M:%S")
         mem_bytes = bio_m.getvalue()
         aux_bytes = bio_a.getvalue()
@@ -150,14 +165,32 @@ class SwarmPlasticStore:
             return False
         mem_blob, aux_blob = row
         dev = memory.mem.device
-        memory.load_state_dict(
-            torch.load(io.BytesIO(mem_blob), map_location=dev, weights_only=True)
-        )
+        mem_state = torch.load(io.BytesIO(mem_blob), map_location=dev, weights_only=True)
+        if isinstance(mem_state, dict) and "model" in mem_state:
+            memory.load_state_dict(mem_state["model"])
+            opt_state = mem_state.get("optimizer")
+            if opt_state:
+                try:
+                    memory.optimizer.load_state_dict(opt_state)
+                except ValueError:
+                    pass
+        else:
+            memory.load_state_dict(mem_state)
         if aux is not None and aux_blob:
             adev = next(aux.parameters()).device
-            aux.load_state_dict(
-                torch.load(io.BytesIO(aux_blob), map_location=adev, weights_only=True)
-            )
+            aux_state = torch.load(io.BytesIO(aux_blob), map_location=adev, weights_only=True)
+            if isinstance(aux_state, dict) and "model" in aux_state:
+                model_state = aux_state.get("model")
+                if model_state:
+                    aux.load_state_dict(model_state)
+                opt_state = aux_state.get("optimizer")
+                if opt_state:
+                    try:
+                        aux.opt.load_state_dict(opt_state)
+                    except ValueError:
+                        pass
+            else:
+                aux.load_state_dict(aux_state)
         return True
 
 

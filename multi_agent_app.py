@@ -38,6 +38,7 @@ def _role_tag(role: str) -> str:
         "Ciclo": "c",
         "Memoria": "m",
         "BufferNet": "b",
+        "Persistencia": "s",
         "Sistema": "s",
     }.get(role, "s")
 
@@ -90,8 +91,8 @@ def main() -> None:
         text=(
             "Entrada: un OBJETIVO (texto). Flujo: Entiende → Planifica → Discuten → "
             "Ejecutan → Prueban → Revisor (SI/NO + retro). Cada ciclo: memoria compartida "
-            "aprende; el buffer del ciclo entrena una red auxiliar y se vacía. "
-            "Al cerrar la ventana se guardan pesos en data/plastic_swarm.sqlite. "
+            "aprende minimizando energía libre; el buffer del ciclo entrena una red auxiliar "
+            "y se vacía. Se guardan pesos y optimizadores tras cada ciclo y al cerrar. "
             "Solo LLM vía API LM Studio (.env: LLM_API_BASE_URL, LLM_MODEL)."
         ),
         wraplength=800,
@@ -236,6 +237,7 @@ def main() -> None:
                     n_execute=n_x,
                     n_test=n_t,
                     on_log=emit,
+                    on_cycle_checkpoint=lambda: store.save(shared_mem, plastic_aux),
                 )
             except Exception as exc:
                 root.after(0, lambda: on_fail(exc))

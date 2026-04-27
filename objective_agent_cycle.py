@@ -96,23 +96,14 @@ def _memory_learn(
     mem_cur: torch.Tensor,
     corpus: str,
     final_answer: str,
-) -> float:
+) -> tuple[float, dict[str, float]]:
     device = memory.mem.device
     uemb = text_hash_embed(final_answer, memory.msg_dim, device)
-    glob = mem_cur.mean(dim=0)
-    d = min(int(memory.mem_dim), int(memory.msg_dim))
-    g, ue = glob[:d], uemb[:d]
-    cos = torch.nn.functional.cosine_similarity(
-        g.unsqueeze(0), ue.unsqueeze(0), dim=1
-    ).squeeze(0)
     syn = float(syntax_score(corpus + "\n" + final_answer))
-    loss = (
-        0.0015 * mem_cur.pow(2).mean()
-        - 0.18 * syn * cos
-        - 0.06 * syn * torch.tanh(mem_cur.norm())
-    )
+    signal = 0.35 + 0.65 * syn
+    loss, stats = memory.free_energy_loss(mem_cur, uemb, signal=signal)
     memory.learn(loss)
-    return float(loss.detach().cpu().item())
+    return float(loss.detach().cpu().item()), stats
 
 
 def run_objective_pipeline(
@@ -131,6 +122,7 @@ def run_objective_pipeline(
     n_execute: int = 2,
     n_test: int = 1,
     on_log: Callable[[str, str], None] | None = None,
+    on_cycle_checkpoint: Callable[[], None] | None = None,
 ) -> tuple[str, int, float, bool]:
     """
     weights_ready: si se pasa, se espera al inicio (carga de pesos en segundo plano).
@@ -295,7 +287,7 @@ def run_objective_pipeline(
 
         corpus = "\n".join([out_e, out_p, discuss_acc, execute_acc, test_acc, out_r])
         reached, motivo_prev, final_txt, retro_prev = parse_final_verdict(out_r)
-        last_loss = _memory_learn(memory, mem_cur, corpus, final_txt)
+        last_loss, free_energy_stats = _memory_learn(memory, mem_cur, corpus, final_txt)
 
         lines = cycle_buffer.lines()
         if plastic_aux is not None and len(lines) >= 2:
@@ -305,8 +297,20 @@ def run_objective_pipeline(
 
         log(
             "Memoria",
-            f"ciclo {cyc + 1}: loss_shared={last_loss:.4f}  {memory.snapshot_text()}",
+            "ciclo "
+            f"{cyc + 1}: energia_libre={free_energy_stats['free_energy']:.4f} "
+            f"loss={last_loss:.4f} "
+            f"sorpresa={free_energy_stats['prediction_error']:.4f} "
+            f"complejidad={free_energy_stats['complexity']:.6f} "
+            f"entropia={free_energy_stats['entropy']:.6f} "
+            f"senal={free_energy_stats['signal']:.2f}  {memory.snapshot_text()}",
         )
+        if on_cycle_checkpoint is not None:
+            try:
+                on_cycle_checkpoint()
+                log("Persistencia", f"Checkpoint del ciclo {cyc + 1} guardado.")
+            except Exception as exc:
+                log("Persistencia", f"No se pudo guardar el ciclo {cyc + 1}: {exc}")
 
         if reached:
             log("Sistema", "Objetivo certificado por el Revisor.")
