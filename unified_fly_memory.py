@@ -39,10 +39,14 @@ class SharedFlyMemory(nn.Module):
             self.mem = nn.Parameter(torch.zeros(n_slots, mem_dim))
             self.rept_W = nn.Parameter(torch.zeros(mem_dim, mem_dim))
             self.rept_b = nn.Parameter(torch.zeros(mem_dim))
+            self.quantum_phase = nn.Parameter(torch.zeros(mem_dim))
+            self.quantum_pos = nn.Parameter(torch.zeros(mem_dim))
         else:
             self.mem = nn.Parameter(torch.randn(n_slots, mem_dim) * 0.02)
             self.rept_W = nn.Parameter(torch.randn(mem_dim, mem_dim) * 0.02)
             self.rept_b = nn.Parameter(torch.zeros(mem_dim))
+            self.quantum_phase = nn.Parameter(torch.randn(mem_dim) * 0.02)
+            self.quantum_pos = nn.Parameter(torch.randn(mem_dim) * 0.02)
 
         in_w = msg_dim + n_agents_max + mem_dim + mem_dim
         self.writer = nn.Sequential(
@@ -102,6 +106,53 @@ class SharedFlyMemory(nn.Module):
         """Lectura O(1) relativa al estado mem_cur (misma API que write_step)."""
         return self._read_from_mem(mem_cur, agent_id)
 
+    def _target_to_mem_dim(self, target_emb: torch.Tensor) -> torch.Tensor:
+        target = target_emb.to(self.mem.device).view(-1)
+        if target.numel() >= self.mem_dim:
+            return target[: self.mem_dim]
+        return F.pad(target, (0, self.mem_dim - target.numel()))
+
+    def quantum_collapse(
+        self,
+        mem_cur: torch.Tensor,
+        target_emb: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """
+        Mecanismo cuantico-inspirado, no fisica cuantica real.
+
+        La memoria y el objetivo se proyectan a fase/posicion. Cuando la
+        distancia baja y la fase coincide, ocurre una "colision"; la lectura
+        colapsa a una compuerta de disparo neuronal con estimador straight-through.
+        """
+        glob, rep = self._global_code(mem_cur)
+        target = self._target_to_mem_dim(target_emb)
+        target_phase = torch.tanh(target)
+        mem_phase = torch.tanh(glob + self.quantum_phase)
+        mem_pos = torch.tanh(rep + self.quantum_pos)
+
+        pos_distance = (mem_pos - target_phase).pow(2)
+        phase_overlap = 0.5 * (
+            F.cosine_similarity(
+                mem_phase.unsqueeze(0),
+                target_phase.unsqueeze(0),
+                dim=1,
+                eps=1e-6,
+            ).squeeze(0)
+            + 1.0
+        )
+        collision = torch.exp(-pos_distance) * phase_overlap
+        collapse_prob = torch.sigmoid(12.0 * (collision - 0.48))
+        spike_hard = (collapse_prob > 0.5).to(collapse_prob.dtype)
+        spike = spike_hard.detach() - collapse_prob.detach() + collapse_prob
+        collapsed_read = spike * torch.tanh(glob + rep)
+        stats = {
+            "collision": collision.mean(),
+            "collapse_prob": collapse_prob.mean(),
+            "spike_rate": spike_hard.mean(),
+            "collapsed_read": collapsed_read,
+        }
+        return spike, stats
+
     def free_energy_loss(
         self,
         mem_cur: torch.Tensor,
@@ -118,14 +169,27 @@ class SharedFlyMemory(nn.Module):
         """
         glob, rep = self._global_code(mem_cur)
         d = min(int(self.mem_dim), int(target_emb.numel()))
+        target_full = self._target_to_mem_dim(target_emb)
         g = F.normalize(glob[:d], dim=0, eps=1e-6)
-        target = F.normalize(target_emb[:d].to(mem_cur.device), dim=0, eps=1e-6)
+        target = F.normalize(target_full[:d], dim=0, eps=1e-6)
         prediction_error = 1.0 - F.cosine_similarity(
             g.unsqueeze(0), target.unsqueeze(0), dim=1
         ).squeeze(0)
+        _spike, qstats = self.quantum_collapse(mem_cur, target_emb)
+        collapsed_read = qstats["collapsed_read"]
+        collapse_alignment = F.mse_loss(collapsed_read[:d], target_full[:d])
+        p = qstats["collapse_prob"].clamp(1e-5, 1.0 - 1e-5)
+        collapse_entropy = -(p * torch.log(p) + (1.0 - p) * torch.log(1.0 - p))
+        firing_cost = 0.002 * qstats["spike_rate"] + 0.012 * collapse_entropy
         complexity = 0.0015 * mem_cur.pow(2).mean() + 0.0005 * rep.pow(2).mean()
         entropy = torch.log1p(mem_cur.var(dim=0, unbiased=False).mean())
-        free_energy = prediction_error + complexity - 0.035 * entropy
+        free_energy = (
+            prediction_error
+            + complexity
+            + 0.10 * qstats["collapse_prob"] * collapse_alignment
+            + firing_cost
+            - 0.035 * entropy
+        )
         learning_signal = torch.as_tensor(
             max(0.05, float(signal)),
             device=mem_cur.device,
@@ -138,6 +202,10 @@ class SharedFlyMemory(nn.Module):
             "complexity": float(complexity.detach().cpu().item()),
             "entropy": float(entropy.detach().cpu().item()),
             "signal": float(learning_signal.detach().cpu().item()),
+            "quantum_collision": float(qstats["collision"].detach().cpu().item()),
+            "collapse_prob": float(qstats["collapse_prob"].detach().cpu().item()),
+            "spike_rate": float(qstats["spike_rate"].detach().cpu().item()),
+            "collapse_alignment": float(collapse_alignment.detach().cpu().item()),
         }
         return loss, stats
 

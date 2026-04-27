@@ -303,6 +303,9 @@ def run_objective_pipeline(
             f"sorpresa={free_energy_stats['prediction_error']:.4f} "
             f"complejidad={free_energy_stats['complexity']:.6f} "
             f"entropia={free_energy_stats['entropy']:.6f} "
+            f"colision_q={free_energy_stats['quantum_collision']:.4f} "
+            f"colapso={free_energy_stats['collapse_prob']:.4f} "
+            f"disparo={free_energy_stats['spike_rate']:.4f} "
             f"senal={free_energy_stats['signal']:.2f}  {memory.snapshot_text()}",
         )
         if on_cycle_checkpoint is not None:

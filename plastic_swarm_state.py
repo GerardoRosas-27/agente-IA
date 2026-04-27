@@ -167,7 +167,7 @@ class SwarmPlasticStore:
         dev = memory.mem.device
         mem_state = torch.load(io.BytesIO(mem_blob), map_location=dev, weights_only=True)
         if isinstance(mem_state, dict) and "model" in mem_state:
-            memory.load_state_dict(mem_state["model"])
+            memory.load_state_dict(mem_state["model"], strict=False)
             opt_state = mem_state.get("optimizer")
             if opt_state:
                 try:
@@ -175,7 +175,7 @@ class SwarmPlasticStore:
                 except ValueError:
                     pass
         else:
-            memory.load_state_dict(mem_state)
+            memory.load_state_dict(mem_state, strict=False)
         if aux is not None and aux_blob:
             adev = next(aux.parameters()).device
             aux_state = torch.load(io.BytesIO(aux_blob), map_location=adev, weights_only=True)
