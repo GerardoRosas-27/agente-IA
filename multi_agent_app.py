@@ -18,6 +18,7 @@ from objective_agent_cycle import run_objective_pipeline
 from plastic_swarm_state import (
     BufferPlasticNet,
     CycleBuffer,
+    SharedExperienceReplay,
     SwarmPlasticStore,
     start_background_weights_load,
 )
@@ -38,6 +39,7 @@ def _role_tag(role: str) -> str:
         "Ciclo": "c",
         "Memoria": "m",
         "BufferNet": "b",
+        "Replay": "y",
         "Persistencia": "s",
         "Sistema": "s",
     }.get(role, "s")
@@ -58,6 +60,18 @@ def main() -> None:
     p.add_argument("--discuss", type=int, default=2)
     p.add_argument("--execute", type=int, default=2)
     p.add_argument("--test", type=int, default=1, help="Agentes probadores por ciclo.")
+    p.add_argument(
+        "--torch-threads",
+        type=int,
+        default=1,
+        help="Hilos CPU de PyTorch; 1 reduce contencion en equipos pequenos.",
+    )
+    p.add_argument(
+        "--replay-capacity",
+        type=int,
+        default=240,
+        help="Experiencias compartidas persistentes a conservar.",
+    )
     args = p.parse_args()
 
     llm_chat_fn, llm_model_id, llm_backend_label = resolve_llm_chat_for_pipeline(
@@ -65,6 +79,7 @@ def main() -> None:
     )
 
     device = torch.device("cpu")
+    torch.set_num_threads(max(1, int(args.torch_threads)))
 
     shared_mem = SharedFlyMemory(
         n_slots=max(4, args.mem_slots),
@@ -78,6 +93,7 @@ def main() -> None:
 
     plastic_aux = BufferPlasticNet(dim=40, hidden=96).to(device)
     store = SwarmPlasticStore()
+    experience_replay = SharedExperienceReplay(capacity=args.replay_capacity, embed_dim=40)
     weights_ready = threading.Event()
     start_background_weights_load(store, shared_mem, plastic_aux, weights_ready)
 
@@ -92,7 +108,8 @@ def main() -> None:
             "Entrada: un OBJETIVO (texto). Flujo: Entiende → Planifica → Discuten → "
             "Ejecutan → Prueban → Revisor (SI/NO + retro). Cada ciclo: memoria compartida "
             "aprende minimizando energía libre; el buffer del ciclo entrena una red auxiliar "
-            "y se vacía. Se guardan pesos y optimizadores tras cada ciclo y al cerrar. "
+            "y se vacía. Replay compartido recupera experiencia episódica, procedimental "
+            "y transactiva sin crecer indefinidamente. Se guardan pesos y optimizadores tras cada ciclo y al cerrar. "
             "Solo LLM vía API LM Studio (.env: LLM_API_BASE_URL, LLM_MODEL)."
         ),
         wraplength=800,
@@ -123,6 +140,7 @@ def main() -> None:
         ("c", "#94a3b8"),
         ("m", "#9ca3af"),
         ("b", "#818cf8"),
+        ("y", "#22d3ee"),
         ("s", "#64748b"),
     ):
         log.tag_configure(tag, foreground=fg)
@@ -229,6 +247,7 @@ def main() -> None:
                     llm_chat_fn,
                     cycle_buffer=cycle_buf,
                     plastic_aux=plastic_aux,
+                    experience_replay=experience_replay,
                     weights_ready=weights_ready,
                     num_predict=args.num_predict,
                     num_predict_final=args.num_predict_final,

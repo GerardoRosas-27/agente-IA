@@ -5,6 +5,7 @@ Reutiliza text_hash_embed (sin sentence-transformers).
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import threading
 import time
@@ -254,3 +255,278 @@ def start_background_weights_load(
     th = threading.Thread(target=_job, daemon=True)
     th.start()
     return th
+
+
+class SharedExperienceReplay:
+    """
+    Memoria compartida acotada para aprendizaje de por vida:
+    episodica (experiencias), procedimental (patrones exitosos) y transactiva
+    (que rol suele saber/resolver que).
+    """
+
+    def __init__(
+        self,
+        db_path: Path | None = None,
+        *,
+        capacity: int = 240,
+        embed_dim: int = 40,
+    ) -> None:
+        self.db_path = db_path or DEFAULT_DB
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.capacity = max(24, int(capacity))
+        self.embed_dim = max(8, int(embed_dim))
+        self._init_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(str(self.db_path))
+
+    def _init_db(self) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS shared_experiences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created TEXT,
+                cycle INTEGER,
+                role TEXT,
+                agent_key TEXT,
+                objective TEXT,
+                text TEXT,
+                reward REAL,
+                importance REAL,
+                embedding TEXT
+            )"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS procedural_memory (
+                title TEXT PRIMARY KEY,
+                content TEXT,
+                success_count INTEGER DEFAULT 0,
+                failure_count INTEGER DEFAULT 0,
+                source_count INTEGER DEFAULT 0,
+                updated TEXT
+            )"""
+            )
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS transactive_memory (
+                agent_key TEXT PRIMARY KEY,
+                last_role TEXT,
+                interactions INTEGER DEFAULT 0,
+                success_ema REAL DEFAULT 0.0,
+                avg_reward REAL DEFAULT 0.0,
+                last_seen TEXT
+            )"""
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _embed_json(self, text: str) -> str:
+        emb = text_hash_embed(text, self.embed_dim, "cpu").detach().cpu().tolist()
+        return json.dumps([round(float(x), 6) for x in emb], separators=(",", ":"))
+
+    @staticmethod
+    def _cosine(a: list[float], b: list[float]) -> float:
+        if not a or not b:
+            return 0.0
+        n = min(len(a), len(b))
+        dot = sum(a[i] * b[i] for i in range(n))
+        na = sum(a[i] * a[i] for i in range(n)) ** 0.5
+        nb = sum(b[i] * b[i] for i in range(n)) ** 0.5
+        if na <= 1e-9 or nb <= 1e-9:
+            return 0.0
+        return float(dot / (na * nb))
+
+    def _query_vec(self, query: str) -> list[float]:
+        return json.loads(self._embed_json(query))
+
+    def record_cycle(
+        self,
+        *,
+        cycle: int,
+        objective: str,
+        events: list[tuple[str, str]],
+        reached: bool,
+    ) -> None:
+        if not events:
+            return
+        reward = 1.0 if reached else -0.25
+        created = time.strftime("%Y-%m-%dT%H:%M:%S")
+        conn = self._connect()
+        try:
+            for role, text in events:
+                clean = text.strip().replace("\n", " ")[:1800]
+                if not clean:
+                    continue
+                agent_key = role.rstrip("0123456789") or role
+                importance = max(0.05, min(1.0, 0.55 + 0.45 * reward))
+                conn.execute(
+                    """INSERT INTO shared_experiences
+                       (created, cycle, role, agent_key, objective, text, reward, importance, embedding)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (
+                        created,
+                        int(cycle),
+                        role[:64],
+                        agent_key[:64],
+                        objective[:800],
+                        clean,
+                        reward,
+                        importance,
+                        self._embed_json(f"{objective}\n{role}\n{clean}"),
+                    ),
+                )
+                self._update_transactive(conn, agent_key, role, reward, reached, created)
+
+            if reached:
+                self._consolidate_success(conn, objective, events, created)
+            else:
+                self._mark_procedure_failures(conn, events, created)
+
+            conn.execute(
+                """DELETE FROM shared_experiences
+                   WHERE id NOT IN (
+                       SELECT id FROM shared_experiences ORDER BY id DESC LIMIT ?
+                   )""",
+                (self.capacity,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _update_transactive(
+        self,
+        conn: sqlite3.Connection,
+        agent_key: str,
+        role: str,
+        reward: float,
+        reached: bool,
+        created: str,
+    ) -> None:
+        row = conn.execute(
+            "SELECT interactions, success_ema, avg_reward FROM transactive_memory WHERE agent_key=?",
+            (agent_key,),
+        ).fetchone()
+        hit = 1.0 if reached else 0.0
+        if row:
+            interactions, success_ema, avg_reward = row
+            interactions = int(interactions) + 1
+            success_ema = 0.88 * float(success_ema) + 0.12 * hit
+            avg_reward = 0.88 * float(avg_reward) + 0.12 * float(reward)
+            conn.execute(
+                """UPDATE transactive_memory
+                   SET last_role=?, interactions=?, success_ema=?, avg_reward=?, last_seen=?
+                   WHERE agent_key=?""",
+                (role, interactions, success_ema, avg_reward, created, agent_key),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO transactive_memory
+                   (agent_key, last_role, interactions, success_ema, avg_reward, last_seen)
+                   VALUES (?,?,?,?,?,?)""",
+                (agent_key, role, 1, hit, reward, created),
+            )
+
+    def _consolidate_success(
+        self,
+        conn: sqlite3.Connection,
+        objective: str,
+        events: list[tuple[str, str]],
+        created: str,
+    ) -> None:
+        for role, text in events:
+            base = role.rstrip("0123456789") or role
+            if base not in {"Planifica", "Ejecuta", "Prueba", "Revisor"}:
+                continue
+            title = f"{base}: patron exitoso"
+            content = f"Objetivo: {objective[:280]}\nPatron: {text.strip()[:1000]}"
+            conn.execute(
+                """INSERT INTO procedural_memory
+                   (title, content, success_count, failure_count, source_count, updated)
+                   VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(title) DO UPDATE SET
+                       content=excluded.content,
+                       success_count=success_count + 1,
+                       source_count=source_count + 1,
+                       updated=excluded.updated""",
+                (title, content, 1, 0, 1, created),
+            )
+
+    def _mark_procedure_failures(
+        self,
+        conn: sqlite3.Connection,
+        events: list[tuple[str, str]],
+        created: str,
+    ) -> None:
+        seen = {role.rstrip("0123456789") or role for role, _ in events}
+        for base in seen:
+            title = f"{base}: patron exitoso"
+            conn.execute(
+                "UPDATE procedural_memory SET failure_count=failure_count + 1, updated=? WHERE title=?",
+                (created, title),
+            )
+
+    def retrieval_context(
+        self,
+        query: str,
+        *,
+        agent_key: str = "",
+        limit: int = 4,
+        max_chars: int = 1400,
+    ) -> str:
+        qv = self._query_vec(query)
+        conn = self._connect()
+        try:
+            procedures = conn.execute(
+                """SELECT title, content, success_count, failure_count
+                   FROM procedural_memory
+                   ORDER BY (success_count - failure_count) DESC, updated DESC
+                   LIMIT 3"""
+            ).fetchall()
+            episodes = conn.execute(
+                """SELECT role, text, reward, importance, embedding, id
+                   FROM shared_experiences
+                   ORDER BY id DESC LIMIT ?""",
+                (self.capacity,),
+            ).fetchall()
+            transactive = conn.execute(
+                """SELECT agent_key, interactions, success_ema, avg_reward
+                   FROM transactive_memory
+                   ORDER BY success_ema DESC, interactions DESC LIMIT 5"""
+            ).fetchall()
+        finally:
+            conn.close()
+
+        ranked = []
+        for role, text, reward, importance, emb_json, row_id in episodes:
+            try:
+                ev = json.loads(emb_json)
+            except json.JSONDecodeError:
+                ev = []
+            role_bonus = 0.08 if agent_key and str(role).startswith(agent_key) else 0.0
+            score = 0.70 * self._cosine(qv, ev) + 0.22 * float(importance) + role_bonus
+            score += min(0.08, int(row_id) / max(1, self.capacity * 1000))
+            ranked.append((score, role, text, reward))
+        ranked.sort(reverse=True, key=lambda x: x[0])
+
+        chunks: list[str] = []
+        if procedures:
+            ptxt = []
+            for title, content, ok, fail in procedures:
+                ptxt.append(f"- {title} (ok={ok}, fail={fail}): {str(content).replace(chr(10), ' ')[:360]}")
+            chunks.append("Procedimental:\n" + "\n".join(ptxt))
+        if ranked:
+            etxt = []
+            for _score, role, text, reward in ranked[: max(1, int(limit))]:
+                etxt.append(f"- {role} R={float(reward):+.2f}: {str(text)[:300]}")
+            chunks.append("Episodica compartida:\n" + "\n".join(etxt))
+        if transactive:
+            ttxt = []
+            for key, interactions, success_ema, avg_reward in transactive:
+                ttxt.append(
+                    f"- {key}: n={interactions}, exito_ema={float(success_ema):.2f}, recompensa={float(avg_reward):+.2f}"
+                )
+            chunks.append("Transactiva:\n" + "\n".join(ttxt))
+
+        out = "\n\n".join(chunks).strip()
+        return out[:max(120, int(max_chars))]

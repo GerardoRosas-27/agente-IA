@@ -105,6 +105,10 @@ equivalentes (mismo interfaz).
 `MOTIVO`, `RETROALIMENTACION`, `RESPUESTA_FINAL`). Si **NO**, nuevo ciclo con
 retro inyectada al planificador. Por ciclo: escribe en `SharedFlyMemory` y al
 cerrar el ciclo entrena una **red auxiliar** con el buffer y **vacía el buffer**.
+Además mantiene una **replay compartida acotada** en SQLite: experiencias
+episódicas, patrones procedimentales exitosos y memoria transactiva de qué rol
+suele aportar mejor. Cada rol recupera solo un contexto corto antes de actuar,
+para mejorar continuidad sin crecimiento indefinido de tokens/RAM.
 El aprendizaje por ciclo minimiza **energía libre** (`sorpresa predictiva +
 complejidad - entropía útil`) en memoria compartida, buffer auxiliar y red
 plástica, para que el sistema aprenda sin colapsar a ceros ni crecer de forma
@@ -118,6 +122,7 @@ ventana). Carga inicial en **hilo en segundo plano** (`weights_ready`).
 ```bash
 python multi_agent_app.py
 python multi_agent_app.py --llm-model gemma3:270m --max-cycles 5 --discuss 2 --execute 2 --test 2
+python multi_agent_app.py --torch-threads 1 --replay-capacity 240
 ```
 
 #### LLM Studio (u otro servidor OpenAI-compatible) por API

@@ -12,7 +12,7 @@ from typing import Callable
 import torch
 
 from multi_agent_orchestrator import _ollama, syntax_score, text_hash_embed
-from plastic_swarm_state import BufferPlasticNet, CycleBuffer
+from plastic_swarm_state import BufferPlasticNet, CycleBuffer, SharedExperienceReplay
 from unified_fly_memory import SharedFlyMemory
 
 
@@ -114,6 +114,7 @@ def run_objective_pipeline(
     *,
     cycle_buffer: CycleBuffer,
     plastic_aux: BufferPlasticNet | None = None,
+    experience_replay: SharedExperienceReplay | None = None,
     weights_ready: threading.Event | None = None,
     num_predict: int = 180,
     num_predict_final: int = 280,
@@ -132,6 +133,23 @@ def run_objective_pipeline(
     def logb(role: str, content: str) -> None:
         cycle_buffer.add(role, content)
         log(role, content)
+
+    def replay_ctx(query: str, agent_key: str, max_chars: int = 1200) -> str:
+        if experience_replay is None:
+            return ""
+        try:
+            ctx = experience_replay.retrieval_context(
+                query,
+                agent_key=agent_key,
+                limit=3,
+                max_chars=max_chars,
+            )
+        except Exception as exc:
+            log("Replay", f"No se pudo recuperar memoria compartida: {exc}")
+            return ""
+        if not ctx:
+            return ""
+        return "\n--- Memoria compartida recuperada ---\n" + ctx + "\n"
 
     if weights_ready is not None:
         weights_ready.wait(timeout=180)
@@ -160,6 +178,7 @@ def run_objective_pipeline(
 
     for cyc in range(max(1, int(max_cycles))):
         mem_cur = memory.mem
+        cycle_events: list[tuple[str, str]] = []
         cycles_used = cyc + 1
         logb("Ciclo", f"═══ Ciclo {cyc + 1} / {max_cycles} ═══")
 
@@ -173,6 +192,7 @@ def run_objective_pipeline(
         user_e = f"Entrada bruta (solo para ti):\n{raw}"
         out_e = _ollama(llm_chat, model, sys_e, user_e, num_predict=num_predict + 40)
         logb("Entiende", out_e)
+        cycle_events.append(("Entiende", out_e))
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_e)
         obj_claro, criterios = parse_understanding(out_e, raw)
         crit_txt = "\n".join(f"- {x}" for x in criterios)
@@ -192,10 +212,12 @@ def run_objective_pipeline(
         )
         user_p = (
             f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n{extra}\n"
+            f"{replay_ctx(obj_claro + chr(10) + crit_txt, 'Planifica')}"
             f"Memoria (parcial): {ctx}\nPLAN:"
         )
         out_p = _ollama(llm_chat, model, sys_p, user_p, num_predict=num_predict + 60)
         logb("Planifica", out_p)
+        cycle_events.append(("Planifica", out_p))
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_p)
 
         log(
@@ -211,10 +233,12 @@ def run_objective_pipeline(
             )
             user_d = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nPLAN:\n{out_p[:3500]}\n\n"
+                f"{replay_ctx(obj_claro + chr(10) + out_p + chr(10) + prev, 'Discute', 900)}"
                 f"Voces recientes:\n{prev}\n\nMemoria: {_ctx_snip(memory, mem_cur, i)}\nTu aporte:"
             )
             out_d = _ollama(llm_chat, model, sys_d, user_d, num_predict=num_predict)
             logb(f"Discute{i + 1}", out_d)
+            cycle_events.append((f"Discute{i + 1}", out_d))
             mem_cur = _mem_step(memory, mem_cur, step_slot(), out_d)
             acc_d.append(out_d)
         discuss_acc = "\n---\n".join(acc_d)
@@ -232,10 +256,12 @@ def run_objective_pipeline(
             user_x = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nPLAN:\n{out_p[:2500]}\n\n"
                 f"DISCUSIÓN:\n{discuss_acc[:2500]}\n\n"
+                f"{replay_ctx(obj_claro + chr(10) + out_p + chr(10) + discuss_acc, 'Ejecuta', 1000)}"
                 f"Memoria: {_ctx_snip(memory, mem_cur, j + 2)}\nTu entrega:"
             )
             out_x = _ollama(llm_chat, model, sys_x, user_x, num_predict=num_predict + 40)
             logb(f"Ejecuta{j + 1}", out_x)
+            cycle_events.append((f"Ejecuta{j + 1}", out_x))
             mem_cur = _mem_step(memory, mem_cur, step_slot(), out_x)
             acc_x.append(out_x)
         execute_acc = "\n---\n".join(acc_x)
@@ -252,10 +278,12 @@ def run_objective_pipeline(
             )
             user_t = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nEJECUCIÓN:\n{execute_acc[:3500]}\n\n"
+                f"{replay_ctx(obj_claro + chr(10) + execute_acc, 'Prueba', 900)}"
                 f"Memoria: {_ctx_snip(memory, mem_cur, k + 4)}\nTu informe de prueba:"
             )
             out_t = _ollama(llm_chat, model, sys_t, user_t, num_predict=num_predict + 30)
             logb(f"Prueba{k + 1}", out_t)
+            cycle_events.append((f"Prueba{k + 1}", out_t))
             mem_cur = _mem_step(memory, mem_cur, step_slot(), out_t)
             acc_t.append(out_t)
         test_acc = "\n---\n".join(acc_t)
@@ -274,6 +302,7 @@ def run_objective_pipeline(
             f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n\n"
             f"PLAN:\n{out_p[:1800]}\n\nDISCUSIÓN:\n{discuss_acc[:1800]}\n\n"
             f"EJECUCIÓN:\n{execute_acc[:1800]}\n\nPRUEBAS:\n{test_acc[:1800]}\n"
+            f"{replay_ctx(obj_claro + chr(10) + execute_acc + chr(10) + test_acc, 'Revisor', 1000)}"
         )
         out_r = _ollama(
             llm_chat,
@@ -283,10 +312,25 @@ def run_objective_pipeline(
             num_predict=num_predict_final,
         )
         logb("Revisor", out_r)
+        cycle_events.append(("Revisor", out_r))
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_r)
 
         corpus = "\n".join([out_e, out_p, discuss_acc, execute_acc, test_acc, out_r])
         reached, motivo_prev, final_txt, retro_prev = parse_final_verdict(out_r)
+        if experience_replay is not None:
+            try:
+                experience_replay.record_cycle(
+                    cycle=cyc + 1,
+                    objective=obj_claro,
+                    events=cycle_events,
+                    reached=reached,
+                )
+                log(
+                    "Replay",
+                    "experiencias compartidas registradas; memoria procedimental/transactiva actualizada.",
+                )
+            except Exception as exc:
+                log("Replay", f"No se pudo registrar replay compartido: {exc}")
         last_loss, free_energy_stats = _memory_learn(memory, mem_cur, corpus, final_txt)
 
         lines = cycle_buffer.lines()
