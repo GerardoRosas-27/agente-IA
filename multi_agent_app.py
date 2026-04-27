@@ -259,7 +259,8 @@ def main() -> None:
                     on_cycle_checkpoint=lambda: store.save(shared_mem, plastic_aux),
                 )
             except Exception as exc:
-                root.after(0, lambda: on_fail(exc))
+                err = exc
+                root.after(0, lambda err=err: on_fail(err))
                 return
 
             def done() -> None:
