@@ -106,10 +106,11 @@ equivalentes (mismo interfaz).
 retro inyectada al planificador. Por ciclo: escribe en `SharedFlyMemory` y al
 cerrar el ciclo entrena una **red auxiliar** con el buffer y **vacía el buffer**.
 El aprendizaje por ciclo minimiza **energía libre** (`sorpresa predictiva +
-complejidad - entropía útil`) para que la memoria en blanco aprenda sin
-colapsar a ceros. Incluye un disparo neuronal **cuántico-inspirado**: fase y
-posición latentes detectan colisiones entre memoria y objetivo; cuando hay
-colapso, una compuerta decide si dispara o no y esa lectura entra al loss.
+complejidad - entropía útil`) en memoria compartida, buffer auxiliar y red
+plástica, para que el sistema aprenda sin colapsar a ceros ni crecer de forma
+caótica. Incluye un disparo neuronal **cuántico-inspirado**: fase y posición
+latentes detectan colisiones entre memoria y objetivo; cuando hay colapso, una
+compuerta decide si dispara o no y esa lectura entra al loss.
 Pesos y estado de optimizadores:
 `data/plastic_swarm.sqlite` (guardado tras cada ciclo, tras cada run y al cerrar
 ventana). Carga inicial en **hilo en segundo plano** (`weights_ready`).

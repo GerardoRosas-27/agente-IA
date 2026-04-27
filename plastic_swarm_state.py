@@ -64,9 +64,45 @@ class BufferPlasticNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.dec(self.enc(x))
 
-    def train_on_lines(self, lines: list[str], device: torch.device, steps: int = 6) -> float:
+    def free_energy_loss(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, dict[str, float]]:
+        z = self.enc(x)
+        reconstruction = torch.nn.functional.mse_loss(y, x)
+        latent_prediction = torch.nn.functional.mse_loss(torch.tanh(z.mean(dim=0)), torch.zeros_like(z.mean(dim=0)))
+        weight_complexity = torch.zeros((), device=x.device, dtype=x.dtype)
+        for p in self.parameters():
+            weight_complexity = weight_complexity + p.pow(2).mean()
+        activation_complexity = 0.001 * z.pow(2).mean()
+        entropy = torch.log1p(z.var(dim=0, unbiased=False).mean() + y.var(dim=0, unbiased=False).mean())
+        free_energy = (
+            reconstruction
+            + 0.08 * latent_prediction
+            + 0.0002 * weight_complexity
+            + activation_complexity
+            - 0.025 * entropy
+        )
+        stats = {
+            "free_energy": float(free_energy.detach().cpu().item()),
+            "reconstruction": float(reconstruction.detach().cpu().item()),
+            "latent_prediction": float(latent_prediction.detach().cpu().item()),
+            "complexity": float((0.0002 * weight_complexity + activation_complexity).detach().cpu().item()),
+            "entropy": float(entropy.detach().cpu().item()),
+        }
+        return free_energy, stats
+
+    def train_on_lines(
+        self,
+        lines: list[str],
+        device: torch.device,
+        steps: int = 6,
+    ) -> tuple[float, dict[str, float]]:
         if len(lines) < 2:
-            return 0.0
+            return 0.0, {
+                "free_energy": 0.0,
+                "reconstruction": 0.0,
+                "latent_prediction": 0.0,
+                "complexity": 0.0,
+                "entropy": 0.0,
+            }
         self.train()
         embs = []
         for ln in lines[:80]:
@@ -74,15 +110,23 @@ class BufferPlasticNet(nn.Module):
             embs.append(emb)
         x = torch.stack(embs, dim=0)
         tot = 0.0
+        last_stats = {
+            "free_energy": 0.0,
+            "reconstruction": 0.0,
+            "latent_prediction": 0.0,
+            "complexity": 0.0,
+            "entropy": 0.0,
+        }
         for _ in range(max(1, steps)):
             self.opt.zero_grad()
             y = self.forward(x)
-            loss = torch.nn.functional.mse_loss(y, x)
+            loss, last_stats = self.free_energy_loss(x, y)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.parameters(), 2.5)
             self.opt.step()
             tot += float(loss.detach().cpu())
-        return tot / max(1, steps)
+        last_stats["free_energy"] = tot / max(1, steps)
+        return last_stats["free_energy"], last_stats
 
 
 class SwarmPlasticStore:

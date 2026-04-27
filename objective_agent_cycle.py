@@ -291,8 +291,15 @@ def run_objective_pipeline(
 
         lines = cycle_buffer.lines()
         if plastic_aux is not None and len(lines) >= 2:
-            la = plastic_aux.train_on_lines(lines, memory.mem.device, steps=6)
-            log("BufferNet", f"entrenamiento red auxiliar (buffer ciclo): loss={la:.4f}")
+            la, ba = plastic_aux.train_on_lines(lines, memory.mem.device, steps=6)
+            log(
+                "BufferNet",
+                f"energia_libre={ba['free_energy']:.4f} "
+                f"reconstruccion={ba['reconstruction']:.4f} "
+                f"complejidad={ba['complexity']:.6f} "
+                f"entropia={ba['entropy']:.6f} "
+                f"loss={la:.4f}",
+            )
         cycle_buffer.clear()
 
         log(

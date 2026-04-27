@@ -52,13 +52,17 @@ class ExpansiveNetwork(nn.Module):
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
         self.hidden_size = hidden_size
         self.output_size = output_size
+        self.last_free_energy_stats: dict[str, float] = {}
+
+    def _hidden(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+        return self.act(self.fc1(x))
 
     def forward_heads(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
-        if x.dim() == 1:
-            x = x.unsqueeze(0)
-        h = self.act(self.fc1(x))
+        h = self._hidden(x)
         motor = self.fc2(h).squeeze(0)
         if self.fc_q is None or self.fc_inst is None:
             return motor, None, None
@@ -69,7 +73,50 @@ class ExpansiveNetwork(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.forward_heads(x)[0]
 
-    def learn(self, loss: torch.Tensor) -> None:
+    def free_energy_regularizer(
+        self,
+        state: torch.Tensor,
+        *,
+        entropy_weight: float = 0.035,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        dev = next(self.parameters()).device
+        x = state.to(dev)
+        if x.dim() > 1:
+            x = x.view(-1)
+        h = self._hidden(x)
+        motor = self.fc2(h)
+        probs = torch.softmax(motor, dim=-1)
+        log_probs = torch.log_softmax(motor, dim=-1)
+        entropy = -(probs * log_probs).sum(dim=-1).mean()
+        surprise = -torch.log(probs.max(dim=-1).values.clamp_min(1e-6)).mean()
+        activation_complexity = 0.0006 * h.pow(2).mean()
+        weight_complexity = torch.zeros((), device=dev, dtype=h.dtype)
+        chunks = [self.fc1.weight, self.fc2.weight]
+        if self.fc_q is not None:
+            chunks.append(self.fc_q.weight)
+        if self.fc_inst is not None:
+            chunks.append(self.fc_inst.weight)
+        for w in chunks:
+            weight_complexity = weight_complexity + w.pow(2).mean()
+        complexity = activation_complexity + 0.00015 * weight_complexity
+        free_energy = surprise + complexity - entropy_weight * entropy
+        stats = {
+            "free_energy": float(free_energy.detach().cpu().item()),
+            "surprise": float(surprise.detach().cpu().item()),
+            "complexity": float(complexity.detach().cpu().item()),
+            "entropy": float(entropy.detach().cpu().item()),
+        }
+        return free_energy, stats
+
+    def learn(
+        self,
+        loss: torch.Tensor,
+        state: torch.Tensor | None = None,
+        free_energy_weight: float = 0.015,
+    ) -> None:
+        if state is not None and free_energy_weight > 0.0:
+            fe_loss, self.last_free_energy_stats = self.free_energy_regularizer(state)
+            loss = loss + float(free_energy_weight) * fe_loss
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
@@ -98,7 +145,7 @@ class ExpansiveNetwork(nn.Module):
         lp = log_probs[taken_idx]
         R = float(max(-1.0, min(1.0, reward)))
         loss = -torch.tensor(R, device=dev, dtype=lp.dtype) * lp - entropy_coef * entropy
-        self.learn(loss)
+        self.learn(loss, state=x, free_energy_weight=0.01)
 
     @torch.no_grad()
     def connection_stats(self, threshold: float = 1e-3) -> dict:

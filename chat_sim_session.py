@@ -198,7 +198,10 @@ class FlyChatSession:
             - 0.07 * entropy
         )
         if fly_grad:
-            loss = loss + 1e-7 * self.fly.W.pow(2).mean()
+            fe_loss, self.net.last_free_energy_stats = self.net.free_energy_regularizer(
+                state.detach()
+            )
+            loss = loss + 0.015 * fe_loss + 1e-7 * self.fly.W.pow(2).mean()
             self.net.optimizer.zero_grad()
             fo = getattr(self.fly, "fly_optimizer", None)
             if fo is not None:
@@ -211,7 +214,7 @@ class FlyChatSession:
             if fo is not None:
                 fo.step()
         else:
-            self.net.learn(loss)
+            self.net.learn(loss, state=state)
 
         act_name = ACTIONS[action_idx]
         if act_name in ("explorar", "planear", "olfatear"):
