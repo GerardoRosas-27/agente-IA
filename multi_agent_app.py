@@ -6,12 +6,15 @@ Persistencia SQLite (pesos) y carga en segundo plano al arrancar.
 from __future__ import annotations
 
 import argparse
+import os
 import threading
 
 import torch
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
 
+from app_config import grouped_specs, load_config, save_config
+from cognitive_regions import CognitiveSystem, start_rest_cycle_worker
 from llm_api_client import resolve_llm_chat_for_pipeline
 
 from objective_agent_cycle import run_objective_pipeline
@@ -22,6 +25,8 @@ from plastic_swarm_state import (
     SwarmPlasticStore,
     start_background_weights_load,
 )
+from persistent_memory import PersistentMemoryStore
+from skill_manager import SkillManager
 from task_runtime import TaskRuntime
 from tool_library import ToolLibrary
 from unified_fly_memory import SharedFlyMemory
@@ -44,6 +49,8 @@ def _role_tag(role: str) -> str:
         return "v"
     if role.startswith("RegionesEspecializadas"):
         return "o"
+    if role.startswith("CognitiveRegions") or role.startswith("RestCycle"):
+        return "h"
     if role.startswith("GestorHerramientas"):
         return "g"
     if role.startswith("AgenteSkill") or role.startswith("AgentesModulares"):
@@ -58,6 +65,8 @@ def _role_tag(role: str) -> str:
         "GestorHerramientas": "g",
         "ToolPreferenceNet": "v",
         "RegionesEspecializadas": "o",
+        "CognitiveRegions": "h",
+        "RestCycle": "h",
         "AgentesModulares": "a",
         "Skills": "k",
         "Runtime": "u",
@@ -122,6 +131,9 @@ def main() -> None:
     experience_replay = SharedExperienceReplay(capacity=args.replay_capacity, embed_dim=40)
     tool_library = ToolLibrary(embed_dim=40)
     task_runtime = TaskRuntime()
+    persistent_memory = PersistentMemoryStore()
+    skill_manager = SkillManager()
+    cognitive_system = CognitiveSystem()
     weights_ready = threading.Event()
     start_background_weights_load(store, shared_mem, plastic_aux, weights_ready)
 
@@ -175,6 +187,7 @@ def main() -> None:
         ("q", "#60a5fa"),
         ("v", "#86efac"),
         ("o", "#67e8f9"),
+        ("h", "#bef264"),
         ("r", "#6ee7b7"),
         ("c", "#94a3b8"),
         ("m", "#9ca3af"),
@@ -266,6 +279,21 @@ def main() -> None:
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
+
+    if (os.getenv("REST_CYCLE_ENABLED") or "0").strip().lower() in {"1", "true", "yes", "si", "sí", "on"}:
+        try:
+            rest_interval = int(os.getenv("REST_CYCLE_INTERVAL_SECONDS") or "1800")
+        except ValueError:
+            rest_interval = 1800
+        start_rest_cycle_worker(
+            is_idle=lambda: not busy["v"],
+            on_log=emit,
+            interval_s=rest_interval,
+            cognitive_system=cognitive_system,
+            runtime=task_runtime,
+            memory_store=persistent_memory,
+            skill_manager=skill_manager,
+        )
 
     def approve_tool_call(tool: object, request: dict, reason: str) -> bool:
         result = {"approved": False}
@@ -552,6 +580,123 @@ def main() -> None:
         tools_box.bind("<<ListboxSelect>>", on_select)
         refresh_tools()
 
+    def open_config_window() -> None:
+        win = tk.Toplevel(root)
+        win.title("Configuración · .env")
+        win.geometry("820x700")
+        win.configure(bg="#1a1d24")
+
+        header = tk.Frame(win, bg="#1a1d24")
+        header.pack(fill="x", padx=10, pady=(10, 6))
+        tk.Label(
+            header,
+            text="Configuración persistente (.env)",
+            bg="#1a1d24",
+            fg="#e6edf3",
+            font=("Segoe UI", 11, "bold"),
+        ).pack(side="left")
+
+        canvas = tk.Canvas(win, bg="#1a1d24", highlightthickness=0)
+        scrollbar = tk.Scrollbar(win, orient="vertical", command=canvas.yview)
+        form = tk.Frame(canvas, bg="#1a1d24")
+        form.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=form, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=(0, 10))
+        scrollbar.pack(side="right", fill="y", padx=(0, 10), pady=(0, 10))
+
+        loaded = load_config()
+        widgets: dict[str, object] = {}
+        row_idx = 0
+        for section, specs in grouped_specs().items():
+            tk.Label(
+                form,
+                text=section,
+                bg="#1a1d24",
+                fg="#f3f4f6",
+                font=("Segoe UI", 10, "bold"),
+            ).grid(row=row_idx, column=0, columnspan=3, sticky="w", pady=(12, 4))
+            row_idx += 1
+            for spec in specs:
+                tk.Label(
+                    form,
+                    text=spec.key,
+                    bg="#1a1d24",
+                    fg="#c8d0e0",
+                    font=("Consolas", 9),
+                    anchor="w",
+                    width=38,
+                ).grid(row=row_idx, column=0, sticky="w", padx=(0, 8), pady=2)
+                if spec.kind == "bool":
+                    var = tk.BooleanVar(value=str(loaded.get(spec.key, spec.default)).strip().lower() in {"1", "true", "yes", "si", "sí", "on"})
+                    widget = tk.Checkbutton(
+                        form,
+                        variable=var,
+                        bg="#1a1d24",
+                        selectcolor="#252936",
+                        activebackground="#1a1d24",
+                    )
+                    widget.grid(row=row_idx, column=1, sticky="w", pady=2)
+                    widgets[spec.key] = var
+                else:
+                    entry = tk.Entry(
+                        form,
+                        width=52,
+                        bg="#252936",
+                        fg="#f3f4f6",
+                        insertbackground="#f3f4f6",
+                        relief="flat",
+                        show="*" if spec.secret else "",
+                    )
+                    entry.insert(0, loaded.get(spec.key, spec.default))
+                    entry.grid(row=row_idx, column=1, sticky="we", pady=2)
+                    widgets[spec.key] = entry
+                tk.Label(
+                    form,
+                    text=spec.description,
+                    bg="#1a1d24",
+                    fg="#9ca3af",
+                    font=("Segoe UI", 8),
+                    anchor="w",
+                    wraplength=260,
+                    justify="left",
+                ).grid(row=row_idx, column=2, sticky="w", padx=(8, 0), pady=2)
+                row_idx += 1
+
+        def collect_values() -> dict[str, str]:
+            out = {}
+            for section_specs in grouped_specs().values():
+                for spec in section_specs:
+                    widget = widgets[spec.key]
+                    if isinstance(widget, tk.BooleanVar):
+                        out[spec.key] = "1" if widget.get() else "0"
+                    else:
+                        out[spec.key] = widget.get().strip()  # type: ignore[attr-defined]
+            return out
+
+        def save() -> None:
+            try:
+                path = save_config(collect_values())
+            except Exception as exc:
+                messagebox.showerror("Configuración", str(exc), parent=win)
+                return
+            messagebox.showinfo(
+                "Configuración",
+                f"Guardado en {path}.\nAlgunos cambios de LLM pueden requerir reiniciar la app.",
+                parent=win,
+            )
+
+        tk.Button(
+            header,
+            text="Guardar .env",
+            command=save,
+            bg="#6366f1",
+            fg="white",
+            activebackground="#4f46e5",
+            relief="flat",
+            padx=12,
+        ).pack(side="right")
+
     def on_run(_ev=None) -> None:
         if busy["v"]:
             return
@@ -585,6 +730,9 @@ def main() -> None:
                     plastic_aux=plastic_aux,
                     experience_replay=experience_replay,
                     tool_library=tool_library,
+                    skill_manager=skill_manager,
+                    persistent_memory=persistent_memory,
+                    cognitive_system=cognitive_system,
                     task_runtime=task_runtime,
                     autonomous_mode=bool(autonomous_var.get()),
                     approval_callback=approve_tool_call,
@@ -649,6 +797,16 @@ def main() -> None:
         row,
         text="Memoria",
         command=open_memory_window,
+        bg="#374151",
+        fg="white",
+        activebackground="#4b5563",
+        relief="flat",
+        padx=12,
+    ).pack(side="right", padx=(0, 8))
+    tk.Button(
+        row,
+        text="Configuración",
+        command=open_config_window,
         bg="#374151",
         fg="white",
         activebackground="#4b5563",

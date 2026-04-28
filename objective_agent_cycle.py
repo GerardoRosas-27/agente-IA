@@ -21,6 +21,7 @@ from typing import Callable
 import torch
 
 from agent_lifecycle import run_skill_agent_lifecycle
+from cognitive_regions import CognitiveSystem
 from multi_agent_orchestrator import _ollama, syntax_score, text_hash_embed
 from node_probe_tool import parse_node_probe_request, run_node_probe_script
 from persistent_memory import PersistentMemoryStore, parse_memory_curator_response
@@ -462,6 +463,7 @@ def run_objective_pipeline(
     persistent_memory: PersistentMemoryStore | None = None,
     tool_preference_store: ToolPreferenceStore | None = None,
     specialized_region_store: SpecializedRegionStore | None = None,
+    cognitive_system: CognitiveSystem | None = None,
     task_runtime: TaskRuntime | None = None,
     tool_registry: ToolRegistry | None = None,
     autonomous_mode: bool = False,
@@ -512,6 +514,7 @@ def run_objective_pipeline(
     tool_preference_enabled = _env_bool("TOOL_PREFERENCE_NET_ENABLED", True)
     tool_preference_rank_limit = _env_int("TOOL_PREFERENCE_RANK_LIMIT", 8, lo=1, hi=20)
     specialized_regions_enabled = _env_bool("SPECIALIZED_REGIONS_ENABLED", True)
+    cognitive_regions_enabled = _env_bool("COGNITIVE_REGIONS_ENABLED", True)
     auxiliary_fail_open = _env_bool("AUXILIARY_AGENTS_FAIL_OPEN", True)
     search_fn = internet_search_fn or web_research_agent_turn
     run_terminal_fn = terminal_run_fn or run_terminal_command
@@ -540,6 +543,11 @@ def run_objective_pipeline(
         specialized_region_store
         if specialized_region_store is not None
         else (SpecializedRegionStore() if specialized_regions_enabled else None)
+    )
+    cognitive = (
+        cognitive_system
+        if cognitive_system is not None
+        else (CognitiveSystem() if cognitive_regions_enabled else None)
     )
     runtime = task_runtime or TaskRuntime()
     project_root = Path(__file__).resolve().parent
@@ -638,6 +646,19 @@ def run_objective_pipeline(
             log("RegionesEspecializadas", specialized_regions_ctx[:2400])
         except Exception as exc:
             log("RegionesEspecializadas", f"No se pudo consultar regiones: {exc}")
+    cognitive_ctx = ""
+    cognitive_signal = None
+    if cognitive is not None:
+        try:
+            cognitive_signal = cognitive.context(raw)
+            cognitive_ctx = cognitive_signal.text
+            log(
+                "CognitiveRegions",
+                f"accion_sugerida={cognitive_signal.suggested_action} "
+                f"confianza={cognitive_signal.confidence:+.2f}\n{cognitive_ctx[:2600]}",
+            )
+        except Exception as exc:
+            log("CognitiveRegions", f"No se pudo consultar sistema cognitivo: {exc}")
     hot_memory_ctx = ""
     session_memory_ctx = ""
     if memory_store is not None:
@@ -683,6 +704,7 @@ def run_objective_pipeline(
             f"SESIONES_RELEVANTES:\n{session_memory_ctx or '(sin coincidencias)'}\n\n"
             f"PREFERENCIA_NEURONAL_HERRAMIENTAS:\n{tool_preference_ctx or '(sin datos)'}\n\n"
             f"REGIONES_ESPECIALIZADAS:\n{specialized_regions_ctx or '(sin datos)'}\n\n"
+            f"SISTEMA_COGNITIVO:\n{cognitive_ctx or '(sin datos)'}\n\n"
             f"Entrada bruta (solo para ti):\n{raw}"
         )
         out_e = _ollama(
@@ -840,6 +862,7 @@ def run_objective_pipeline(
             f"SESIONES_RELEVANTES:\n{session_memory_ctx[:1000] or '(sin coincidencias)'}\n\n"
             f"PREFERENCIA_NEURONAL_HERRAMIENTAS:\n{tool_preference_ctx[:1200] or '(sin datos)'}\n\n"
             f"REGIONES_ESPECIALIZADAS:\n{specialized_regions_ctx[:1400] or '(sin datos)'}\n\n"
+            f"SISTEMA_COGNITIVO:\n{cognitive_ctx[:1400] or '(sin datos)'}\n\n"
             f"HERRAMIENTAS_REUTILIZABLES:\n{tool_ctx or '(sin coincidencias)'}\n\n"
             f"{replay_ctx(obj_claro + chr(10) + crit_txt, 'Planifica')}"
             f"{work_ctx(working_pool)}"
@@ -1464,6 +1487,27 @@ def run_objective_pipeline(
                 if not auxiliary_fail_open:
                     raise
                 log("RegionesEspecializadas", f"No se pudieron entrenar regiones: {exc}")
+        if cognitive is not None:
+            try:
+                actors = [role for role, _text in cycle_events]
+                cog_stats = cognitive.learn_from_cycle(
+                    objective=obj_claro,
+                    actors=actors,
+                    reached=reached,
+                    cycles_used=cycles_used,
+                    tool_calls=tool_calls_for_learning,
+                    final_answer=final_txt,
+                    created_skill=created_skill_this_cycle,
+                )
+                summary = "; ".join(
+                    f"{name}:FE={stats['free_energy']:.4f}"
+                    for name, stats in cog_stats.items()
+                )
+                log("CognitiveRegions", summary)
+            except Exception as exc:
+                if not auxiliary_fail_open:
+                    raise
+                log("CognitiveRegions", f"No se pudo entrenar sistema cognitivo: {exc}")
         last_loss, free_energy_stats = _memory_learn(memory, mem_cur, corpus, final_txt)
 
         lines = cycle_buffer.lines()
