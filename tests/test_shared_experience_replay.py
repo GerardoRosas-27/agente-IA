@@ -53,6 +53,7 @@ class TestSharedExperienceReplay(unittest.TestCase):
 
         from objective_agent_cycle import run_objective_pipeline
         from plastic_swarm_state import CycleBuffer, SharedExperienceReplay
+        from tool_library import ToolLibrary
         from unified_fly_memory import SharedFlyMemory
 
         def fake_chat(_model, messages, _options):
@@ -74,6 +75,7 @@ class TestSharedExperienceReplay(unittest.TestCase):
                 capacity=24,
                 embed_dim=16,
             )
+            tool_library = ToolLibrary(Path(tmp) / "tools.sqlite", embed_dim=16)
             memory = SharedFlyMemory(
                 n_slots=4,
                 mem_dim=32,
@@ -96,6 +98,7 @@ class TestSharedExperienceReplay(unittest.TestCase):
                 n_test=1,
                 internet_agent_enabled=False,
                 python_test_agent_enabled=False,
+                tool_library=tool_library,
             )
 
             ctx = replay.retrieval_context("mejorar sistema", agent_key="Revisor")

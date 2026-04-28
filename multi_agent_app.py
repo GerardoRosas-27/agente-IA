@@ -22,6 +22,7 @@ from plastic_swarm_state import (
     SwarmPlasticStore,
     start_background_weights_load,
 )
+from tool_library import ToolLibrary
 from unified_fly_memory import SharedFlyMemory
 
 
@@ -34,11 +35,18 @@ def _role_tag(role: str) -> str:
         return "x"
     if role.startswith("PruebaPython"):
         return "z"
+    if role.startswith("PruebaNode"):
+        return "n"
+    if role.startswith("Terminal"):
+        return "q"
+    if role.startswith("GestorHerramientas"):
+        return "g"
     if role.startswith("Prueba"):
         return "t"
     return {
         "Entiende": "e",
         "Planifica": "p",
+        "GestorHerramientas": "g",
         "Revisor": "r",
         "Ciclo": "c",
         "Memoria": "m",
@@ -98,6 +106,7 @@ def main() -> None:
     plastic_aux = BufferPlasticNet(dim=40, hidden=96).to(device)
     store = SwarmPlasticStore()
     experience_replay = SharedExperienceReplay(capacity=args.replay_capacity, embed_dim=40)
+    tool_library = ToolLibrary(embed_dim=40)
     weights_ready = threading.Event()
     start_background_weights_load(store, shared_mem, plastic_aux, weights_ready)
 
@@ -109,13 +118,13 @@ def main() -> None:
     hdr = tk.Label(
         root,
         text=(
-            "Entrada: un OBJETIVO (texto). Flujo: Entiende → Planifica → Internet → "
-            "Discuten → Ejecutan → Prueban → PruebaPython → Revisor (SI/NO + retro). Cada ciclo: memoria compartida "
+            "Entrada: un OBJETIVO (texto). Flujo: Entiende → GestorHerramientas → Planifica → Internet → "
+            "Discuten → Ejecutan → Prueban → PruebaPython → PruebaNode → Terminal → Revisor (SI/NO + retro). Cada ciclo: memoria compartida "
             "aprende minimizando energía libre; el buffer del ciclo entrena una red auxiliar "
             "y se vacía. Replay compartido recupera experiencia episódica, procedimental "
             "y transactiva sin crecer indefinidamente. Se guardan pesos y optimizadores tras cada ciclo y al cerrar. "
             "Solo LLM vía API LM Studio (.env: LLM_API_BASE_URL, LLM_MODEL). "
-            "Agentes Internet y PruebaPython activos por defecto, configurables en .env."
+            "Agentes Internet, PruebaPython, PruebaNode, Terminal y GestorHerramientas configurables en .env."
         ),
         wraplength=800,
         justify="left",
@@ -139,10 +148,13 @@ def main() -> None:
         ("e", "#fbbf24"),
         ("p", "#38bdf8"),
         ("i", "#2dd4bf"),
+        ("g", "#c084fc"),
         ("d", "#a78bfa"),
         ("x", "#34d399"),
         ("t", "#fb7185"),
         ("z", "#f97316"),
+        ("n", "#facc15"),
+        ("q", "#60a5fa"),
         ("r", "#6ee7b7"),
         ("c", "#94a3b8"),
         ("m", "#9ca3af"),
@@ -255,6 +267,7 @@ def main() -> None:
                     cycle_buffer=cycle_buf,
                     plastic_aux=plastic_aux,
                     experience_replay=experience_replay,
+                    tool_library=tool_library,
                     weights_ready=weights_ready,
                     num_predict=args.num_predict,
                     num_predict_final=args.num_predict_final,

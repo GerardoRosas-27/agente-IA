@@ -21,12 +21,15 @@ from typing import Callable
 import torch
 
 from multi_agent_orchestrator import _ollama, syntax_score, text_hash_embed
+from node_probe_tool import parse_node_probe_request, run_node_probe_script
 from plastic_swarm_state import (
     BufferPlasticNet,
     CycleBuffer,
     SharedExperienceReplay,
     WorkingMemoryPool,
 )
+from terminal_tool import parse_terminal_command_request, run_terminal_command
+from tool_library import ToolLibrary, parse_tool_memory_request
 from unified_fly_memory import SharedFlyMemory
 
 _TRUE_ENV = {"1", "true", "yes", "si", "sí", "on", "y"}
@@ -294,12 +297,28 @@ _PYTHON_PROBE_RELEVANCE_RE = re.compile(
     re.I,
 )
 
+_NODE_PROBE_RELEVANCE_RE = re.compile(
+    r"\b("
+    r"node|nodejs|node\.js|javascript|js|typescript|ts|npm|package\.json|"
+    r"frontend|backend js|express|react|vite|next|json|regex|webhook|api|"
+    r"validar|verificar|parse|transformar|uuid|crypto|hash|base64"
+    r")\b",
+    re.I,
+)
+
 
 def is_python_probe_relevant(*parts: str) -> bool:
     text = "\n".join(p for p in parts if p).strip()
     if not text:
         return False
     return bool(_PYTHON_PROBE_RELEVANCE_RE.search(text))
+
+
+def is_node_probe_relevant(*parts: str) -> bool:
+    text = "\n".join(p for p in parts if p).strip()
+    if not text:
+        return False
+    return bool(_NODE_PROBE_RELEVANCE_RE.search(text))
 
 
 _PROBE_BLOCKLIST = (
@@ -427,7 +446,11 @@ def run_objective_pipeline(
     n_test: int = 1,
     internet_agent_enabled: bool | None = None,
     python_test_agent_enabled: bool | None = None,
+    node_test_agent_enabled: bool | None = None,
+    terminal_agent_enabled: bool | None = None,
     internet_search_fn: Callable[..., str] | None = None,
+    terminal_run_fn: Callable[..., object] | None = None,
+    tool_library: ToolLibrary | None = None,
     on_log: Callable[[str, str], None] | None = None,
     on_cycle_checkpoint: Callable[[], None] | None = None,
 ) -> tuple[str, int, float, bool]:
@@ -445,13 +468,32 @@ def run_objective_pipeline(
         if python_test_agent_enabled is None
         else bool(python_test_agent_enabled)
     )
+    node_probe_enabled = (
+        _env_bool("NODE_TEST_AGENT_ENABLED", True)
+        if node_test_agent_enabled is None
+        else bool(node_test_agent_enabled)
+    )
+    terminal_enabled = (
+        _env_bool("TERMINAL_AGENT_ENABLED", False)
+        if terminal_agent_enabled is None
+        else bool(terminal_agent_enabled)
+    )
     web_max_results = _env_int("INTERNET_AGENT_MAX_RESULTS", 4, lo=1, hi=8)
     web_timeout = _env_float("INTERNET_AGENT_TIMEOUT", 4.0, lo=1.0, hi=20.0)
     probe_timeout = _env_float("PYTHON_TEST_AGENT_TIMEOUT", 5.0, lo=1.0, hi=20.0)
     probe_max_chars = _env_int("PYTHON_TEST_AGENT_MAX_CHARS", 2500, lo=200, hi=8000)
     probe_skip_non_code = _env_bool("PYTHON_TEST_AGENT_SKIP_NON_CODE", True)
+    node_probe_timeout = _env_float("NODE_TEST_AGENT_TIMEOUT", 5.0, lo=1.0, hi=20.0)
+    node_probe_max_chars = _env_int("NODE_TEST_AGENT_MAX_CHARS", 3000, lo=200, hi=10000)
+    node_probe_skip_non_code = _env_bool("NODE_TEST_AGENT_SKIP_NON_CODE", True)
+    terminal_timeout = _env_float("TERMINAL_AGENT_TIMEOUT", 10.0, lo=1.0, hi=60.0)
+    terminal_max_output = _env_int("TERMINAL_AGENT_MAX_OUTPUT_CHARS", 4000, lo=500, hi=12000)
+    tool_manager_enabled = _env_bool("TOOL_LIBRARY_AGENT_ENABLED", True)
+    tool_library_max_results = _env_int("TOOL_LIBRARY_MAX_RESULTS", 4, lo=1, hi=8)
     auxiliary_fail_open = _env_bool("AUXILIARY_AGENTS_FAIL_OPEN", True)
     search_fn = internet_search_fn or web_research_agent_turn
+    run_terminal_fn = terminal_run_fn or run_terminal_command
+    tools = tool_library if tool_library is not None else (ToolLibrary() if tool_manager_enabled else None)
 
     def logb(role: str, content: str) -> None:
         cycle_buffer.add(role, content)
@@ -534,6 +576,26 @@ def run_objective_pipeline(
         obj_claro, criterios = parse_understanding(out_e, raw)
         crit_txt = "\n".join(f"- {x}" for x in criterios)
 
+        tool_ctx = ""
+        if tool_manager_enabled and tools is not None:
+            log("Sistema", "── GestorHerramientas (recupera herramientas previas) ──")
+            try:
+                tool_ctx = tools.context(
+                    f"{obj_claro}\n{crit_txt}\n{raw[:1200]}",
+                    limit=tool_library_max_results,
+                    max_chars=1800,
+                )
+            except Exception as exc:
+                tool_ctx = ""
+                log("GestorHerramientas", f"No se pudo consultar biblioteca: {exc}")
+            if tool_ctx:
+                logb("GestorHerramientas", tool_ctx)
+                cycle_events.append(("GestorHerramientas", tool_ctx))
+                working_pool.add("GestorHerramientas", tool_ctx, salience=0.90)
+                mem_cur = _mem_step(memory, mem_cur, step_slot(), tool_ctx)
+            else:
+                log("GestorHerramientas", "No hay herramientas reutilizables relevantes; continúa.")
+
         log("Sistema", "── Planificador (plan numerado) ──")
         ctx = _ctx_snip(memory, mem_cur, 0)
         extra = ""
@@ -545,10 +607,12 @@ def run_objective_pipeline(
             )
         sys_p = (
             "Eres PLANIFICADOR. Objetivo formal + criterios. "
-            "4-7 pasos numerados. Español, sin saludos.\n"
+            "4-7 pasos numerados. Si la biblioteca trae una herramienta relevante, "
+            "prioriza reutilizarla antes de rehacer trabajo. Español, sin saludos.\n"
         )
         user_p = (
             f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n{extra}\n"
+            f"HERRAMIENTAS_REUTILIZABLES:\n{tool_ctx or '(sin coincidencias)'}\n\n"
             f"{replay_ctx(obj_claro + chr(10) + crit_txt, 'Planifica')}"
             f"{work_ctx(working_pool)}"
             f"Memoria (parcial): {ctx}\nPLAN:"
@@ -597,6 +661,7 @@ def run_objective_pipeline(
             )
             user_d = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nPLAN:\n{out_p[:3500]}\n\n"
+                f"HERRAMIENTAS_REUTILIZABLES:\n{tool_ctx[:1400] or '(sin coincidencias)'}\n\n"
                 f"APORTE_WEB:\n{internet_acc[:1600] or '(sin aporte)'}\n\n"
                 f"{replay_ctx(obj_claro + chr(10) + out_p + chr(10) + prev, 'Discute', 900)}"
                 f"{work_ctx(working_pool, 700)}"
@@ -628,6 +693,7 @@ def run_objective_pipeline(
             )
             user_x = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nPLAN:\n{out_p[:2500]}\n\n"
+                f"HERRAMIENTAS_REUTILIZABLES:\n{tool_ctx[:1400] or '(sin coincidencias)'}\n\n"
                 f"APORTE_WEB:\n{internet_acc[:1600] or '(sin aporte)'}\n\n"
                 f"DISCUSIÓN:\n{discuss_acc[:2500]}\n\n"
                 f"{replay_ctx(obj_claro + chr(10) + out_p + chr(10) + discuss_acc, 'Ejecuta', 1000)}"
@@ -660,6 +726,7 @@ def run_objective_pipeline(
             )
             user_t = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nEJECUCIÓN:\n{execute_acc[:3500]}\n\n"
+                f"HERRAMIENTAS_REUTILIZABLES:\n{tool_ctx[:1200] or '(sin coincidencias)'}\n\n"
                 f"APORTE_WEB:\n{internet_acc[:1400] or '(sin aporte)'}\n\n"
                 f"{replay_ctx(obj_claro + chr(10) + internet_acc + chr(10) + execute_acc, 'Prueba', 900)}"
                 f"{work_ctx(working_pool, 800)}"
@@ -745,6 +812,136 @@ def run_objective_pipeline(
                         raise
                     log("PruebaPython", f"Falló ({exc}); pasa turno sin aportar.")
 
+        node_probe_acc = ""
+        if node_probe_enabled:
+            log("Sistema", "── PruebaNode (script JavaScript pequeño solo si hace falta) ──")
+            if node_probe_skip_non_code and not is_node_probe_relevant(
+                obj_claro,
+                crit_txt,
+                out_p,
+                execute_acc,
+                test_acc,
+            ):
+                log(
+                    "PruebaNode",
+                    "Objetivo sin contexto Node.js/JavaScript ejecutable; pasa turno.",
+                )
+            else:
+                sys_node = (
+                    "Eres PRUEBA_NODE. Decide si hace falta ejecutar un script JavaScript pequeño "
+                    "con Node.js para comprobar transformaciones JSON, regex, cálculos, hashing, "
+                    "parsing o comportamiento específico de JavaScript/Node.\n"
+                    "Si Python ya resolvió la evidencia o Node no aporta algo distinto, marca necesario=false.\n"
+                    "Si es necesario, usa JavaScript autocontenido; puedes usar built-ins seguros como "
+                    "assert, crypto, URL, URLSearchParams, util y path. No uses fs, red, child_process, "
+                    "process.env, eval, Function, input ni escribas archivos. Menos de 80 líneas.\n"
+                    "Devuelve SOLO JSON válido:\n"
+                    "{\"necesario\": false, \"motivo\": \"...\", \"script\": \"\"}\n"
+                )
+                user_node = (
+                    f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n\n"
+                    f"PLAN:\n{out_p[:1600]}\n\nEJECUCIÓN:\n{execute_acc[:2400]}\n\n"
+                    f"PRUEBAS_LLM:\n{test_acc[:1800]}\n\n"
+                    f"PRUEBA_PYTHON:\n{python_probe_acc[:1400] or '(sin aporte)'}\n\n"
+                    f"APORTE_WEB:\n{internet_acc[:1200] or '(sin aporte)'}\n\n"
+                    "¿Hace falta comprobar algo con Node.js? JSON:"
+                )
+                try:
+                    out_node_req = _ollama(
+                        llm_chat,
+                        model,
+                        sys_node,
+                        user_node,
+                        num_predict=_role_budget(num_predict + 50, "Prueba", cycle=cyc),
+                    )
+                    needed, reason, script = parse_node_probe_request(out_node_req)
+                    if needed:
+                        run_result = run_node_probe_script(
+                            script,
+                            timeout=node_probe_timeout,
+                            max_chars=node_probe_max_chars,
+                        )
+                        node_probe_acc = (
+                            f"Motivo: {reason or 'verificación Node.js solicitada'}\n"
+                            f"Script ejecutado:\n{script[:1200]}\n\nResultado:\n{run_result}"
+                        )
+                        logb("PruebaNode", node_probe_acc)
+                        cycle_events.append(("PruebaNode", node_probe_acc))
+                        working_pool.add("PruebaNode", node_probe_acc, salience=0.83)
+                        mem_cur = _mem_step(memory, mem_cur, step_slot(), node_probe_acc)
+                        test_acc = (
+                            "\n---\n".join([test_acc, node_probe_acc])
+                            if test_acc
+                            else node_probe_acc
+                        )
+                    else:
+                        log("PruebaNode", reason or "No hace falta Node.js; pasa turno sin ejecutar.")
+                except Exception as exc:
+                    if not auxiliary_fail_open:
+                        raise
+                    log("PruebaNode", f"Falló ({exc}); pasa turno sin aportar.")
+
+        terminal_acc = ""
+        if terminal_enabled:
+            log("Sistema", "── Terminal (comando seguro solo si aporta evidencia) ──")
+            sys_term = (
+                "Eres TERMINAL_PLANNER. Decide si ejecutar UN comando de terminal aporta "
+                "evidencia real para el objetivo actual.\n"
+                "Solo puedes pedir comandos permitidos por la politica configurada en .env. "
+                "Por defecto estan activos comandos seguros y moderados para lectura/verificacion "
+                "(python, py, pytest, git status/log/diff, rg, dir/ls, where, pip list/freeze, node/npm de inspeccion). "
+                "No pidas instalar, borrar, mover, escribir archivos, leer .env, cambiar git ni usar red.\n"
+                "Devuelve SOLO JSON valido:\n"
+                "{\"necesario\": false, \"motivo\": \"...\", \"command\": \"\", \"cwd\": \".\"}\n"
+            )
+            user_term = (
+                f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n\n"
+                f"PLAN:\n{out_p[:1600]}\n\nEJECUCIÓN:\n{execute_acc[:2200]}\n\n"
+                f"PRUEBAS:\n{test_acc[:2200]}\n\n"
+                "Si un comando seguro puede comprobar algo util, pidelo. JSON:"
+            )
+            try:
+                out_term_req = _ollama(
+                    llm_chat,
+                    model,
+                    sys_term,
+                    user_term,
+                    num_predict=_role_budget(num_predict + 30, "Prueba", cycle=cyc),
+                )
+                term_req = parse_terminal_command_request(out_term_req)
+                if term_req.needed:
+                    result_obj = run_terminal_fn(
+                        term_req.command,
+                        project_root=Path(__file__).resolve().parent,
+                        cwd=term_req.cwd,
+                        timeout=terminal_timeout,
+                        max_output_chars=terminal_max_output,
+                    )
+                    rendered = (
+                        result_obj.render()
+                        if hasattr(result_obj, "render")
+                        else str(result_obj)
+                    )
+                    terminal_acc = (
+                        f"Motivo: {term_req.reason or 'verificacion solicitada'}\n"
+                        f"Resultado terminal:\n{rendered}"
+                    )
+                    logb("Terminal", terminal_acc)
+                    cycle_events.append(("Terminal", terminal_acc))
+                    working_pool.add("Terminal", terminal_acc, salience=0.86)
+                    mem_cur = _mem_step(memory, mem_cur, step_slot(), terminal_acc)
+                    test_acc = (
+                        "\n---\n".join([test_acc, terminal_acc])
+                        if test_acc
+                        else terminal_acc
+                    )
+                else:
+                    log("Terminal", term_req.reason or "No hace falta comando; pasa turno.")
+            except Exception as exc:
+                if not auxiliary_fail_open:
+                    raise
+                log("Terminal", f"Falló ({exc}); pasa turno sin aportar.")
+
         log("Sistema", "── Revisor (veredicto + una RESPUESTA_FINAL al usuario) ──")
         sys_r = (
             "Eres el REVISOR FINAL. Con OBJETIVO_CLARO, criterios, plan, discusión, "
@@ -767,8 +964,10 @@ def run_objective_pipeline(
             f"PREGUNTA_INICIAL_DEL_USUARIO:\n{raw[:4000]}\n\n"
             f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n\n"
             f"PLAN:\n{out_p[:2600]}\n\nDISCUSIÓN:\n{discuss_acc[:2400]}\n\n"
+            f"HERRAMIENTAS_REUTILIZABLES:\n{tool_ctx[:1800] or '(sin coincidencias)'}\n\n"
             f"APORTE_WEB:\n{internet_acc[:2200] or '(sin aporte)'}\n\n"
             f"EJECUCIÓN:\n{execute_acc[:2800]}\n\nPRUEBAS:\n{test_acc[:3000]}\n\n"
+            f"TERMINAL:\n{terminal_acc[:2200] or '(sin aporte)'}\n\n"
             "INSTRUCCION_RESPUESTA_FINAL:\n"
             "Redacta respuesta_final como si hablaras directamente con el usuario que hizo "
             "PREGUNTA_INICIAL_DEL_USUARIO. Ordena la respuesta con párrafos o viñetas claras "
@@ -793,8 +992,73 @@ def run_objective_pipeline(
         working_pool.add("Revisor", out_r, salience=0.92)
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_r)
 
-        corpus = "\n".join([out_e, out_p, internet_acc, discuss_acc, execute_acc, test_acc, out_r])
+        corpus = "\n".join(
+            [out_e, out_p, internet_acc, discuss_acc, execute_acc, test_acc, terminal_acc, out_r]
+        )
         reached, motivo_prev, final_txt, retro_prev = parse_final_verdict(out_r)
+        if tool_manager_enabled and reached and tools is not None:
+            log("Sistema", "── GestorHerramientas (consolida reutilizable si aplica) ──")
+            sys_tool_save = (
+                "Eres GESTOR_HERRAMIENTAS. Analiza el ciclo exitoso y decide si se creo, "
+                "descubrio o valido una herramienta reutilizable: script, comando, conector, "
+                "procedimiento tecnico o integracion con dispositivo/API.\n"
+                "No guardes secretos, tokens, valores de .env ni datos privados. "
+                "Si solo hubo una respuesta general sin herramienta reusable, marca reutilizable=false.\n"
+                "Devuelve SOLO JSON valido:\n"
+                "{"
+                "\"reutilizable\": false, "
+                "\"motivo\": \"...\", "
+                "\"nombre\": \"\", "
+                "\"tipo\": \"script|comando|conector|procedimiento\", "
+                "\"objetivo\": \"\", "
+                "\"activadores\": \"palabras para reconocer objetivos similares\", "
+                "\"entrada\": \"archivo/comando/endpoint si aplica\", "
+                "\"instrucciones\": \"como reutilizarlo\", "
+                "\"evidencia\": \"por que funciono\""
+                "}\n"
+            )
+            user_tool_save = (
+                f"OBJETIVO:\n{obj_claro}\n\nPLAN:\n{out_p[:1800]}\n\n"
+                f"EJECUCION:\n{execute_acc[:2400]}\n\nPRUEBAS:\n{test_acc[:2200]}\n\n"
+                f"TERMINAL:\n{terminal_acc[:1800] or '(sin terminal)'}\n\n"
+                f"RESPUESTA_FINAL:\n{final_txt[:1600]}\n\n"
+                "Decide si hay herramienta reutilizable que guardar. JSON:"
+            )
+            try:
+                out_tool_save = _ollama(
+                    llm_chat,
+                    model,
+                    sys_tool_save,
+                    user_tool_save,
+                    num_predict=_role_budget(num_predict + 120, "Revisor", cycle=cyc),
+                )
+                reusable, tool_memory, reason = parse_tool_memory_request(out_tool_save)
+                if reusable and tool_memory is not None:
+                    if not tool_memory.objective:
+                        tool_memory = type(tool_memory)(
+                            name=tool_memory.name,
+                            kind=tool_memory.kind,
+                            objective=obj_claro[:500],
+                            trigger_terms=tool_memory.trigger_terms,
+                            entrypoint=tool_memory.entrypoint,
+                            instructions=tool_memory.instructions,
+                            evidence=tool_memory.evidence,
+                            success_count=tool_memory.success_count,
+                            failure_count=tool_memory.failure_count,
+                        )
+                    tools.upsert(tool_memory)
+                    saved_msg = (
+                        f"Guardada herramienta reutilizable: {tool_memory.name} "
+                        f"({tool_memory.kind}) -> {tool_memory.entrypoint or 'ver instrucciones'}"
+                    )
+                    logb("GestorHerramientas", saved_msg)
+                    cycle_events.append(("GestorHerramientas", saved_msg))
+                else:
+                    log("GestorHerramientas", reason or "Nada reutilizable que guardar.")
+            except Exception as exc:
+                if not auxiliary_fail_open:
+                    raise
+                log("GestorHerramientas", f"No se pudo consolidar herramienta: {exc}")
         if experience_replay is not None:
             try:
                 experience_replay.record_cycle(
