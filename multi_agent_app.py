@@ -59,7 +59,7 @@ def main() -> None:
     p.add_argument("--mem-slots", type=int, default=6)
     p.add_argument("--mem-dim", type=int, default=64)
     p.add_argument("--num-predict", type=int, default=180)
-    p.add_argument("--num-predict-final", type=int, default=280)
+    p.add_argument("--num-predict-final", type=int, default=900)
     p.add_argument("--max-cycles", type=int, default=4)
     p.add_argument("--discuss", type=int, default=2)
     p.add_argument("--execute", type=int, default=2)

@@ -379,7 +379,8 @@ def _role_budget(base: int, role: str, *, cycle: int, retry: bool = False) -> in
         factor += 0.15
     if retry:
         factor += 0.35
-    return max(48, min(900, int(base * factor)))
+    upper = 1800 if key == "Revisor" else 900
+    return max(48, min(upper, int(base * factor)))
 
 
 def _mem_step(
@@ -419,7 +420,7 @@ def run_objective_pipeline(
     experience_replay: SharedExperienceReplay | None = None,
     weights_ready: threading.Event | None = None,
     num_predict: int = 180,
-    num_predict_final: int = 280,
+    num_predict_final: int = 900,
     max_cycles: int = 4,
     n_discuss: int = 2,
     n_execute: int = 2,
@@ -748,20 +749,31 @@ def run_objective_pipeline(
         sys_r = (
             "Eres el REVISOR FINAL. Con OBJETIVO_CLARO, criterios, plan, discusión, "
             "ejecución, aporte web y pruebas, decide si el objetivo queda satisfecho.\n"
+            "La clave respuesta_final debe ser una respuesta dirigida al usuario final, "
+            "no un resumen interno del pipeline. Debe contestar de forma ordenada la "
+            "pregunta inicial: empieza con la respuesta directa, luego pasos o puntos "
+            "importantes, después advertencias/limitaciones si aplican, y cierra con "
+            "la recomendación práctica. No menciones nombres de agentes salvo que el "
+            "usuario lo haya pedido. Usa suficiente detalle; evita respuestas de una sola frase.\n"
             "Devuelve SOLO JSON válido con estas claves:\n"
             "{\n"
             "  \"objetivo_alcanzado\": true,\n"
             "  \"motivo\": \"breve; si todo está bien usa '-'\",\n"
             "  \"retroalimentacion\": \"si false, qué debe cambiar el próximo ciclo; si true '-'\",\n"
-            "  \"respuesta_final\": \"síntesis útil al usuario\"\n"
+            "  \"respuesta_final\": \"respuesta final clara, ordenada y completa para el usuario\"\n"
             "}\n"
         )
         user_r = (
+            f"PREGUNTA_INICIAL_DEL_USUARIO:\n{raw[:4000]}\n\n"
             f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n\n"
-            f"PLAN:\n{out_p[:1800]}\n\nDISCUSIÓN:\n{discuss_acc[:1800]}\n\n"
-            f"APORTE_WEB:\n{internet_acc[:1400] or '(sin aporte)'}\n\n"
-            f"EJECUCIÓN:\n{execute_acc[:1800]}\n\nPRUEBAS:\n{test_acc[:2200]}\n"
-            f"{replay_ctx(obj_claro + chr(10) + internet_acc + chr(10) + execute_acc + chr(10) + test_acc, 'Revisor', 1000)}"
+            f"PLAN:\n{out_p[:2600]}\n\nDISCUSIÓN:\n{discuss_acc[:2400]}\n\n"
+            f"APORTE_WEB:\n{internet_acc[:2200] or '(sin aporte)'}\n\n"
+            f"EJECUCIÓN:\n{execute_acc[:2800]}\n\nPRUEBAS:\n{test_acc[:3000]}\n\n"
+            "INSTRUCCION_RESPUESTA_FINAL:\n"
+            "Redacta respuesta_final como si hablaras directamente con el usuario que hizo "
+            "PREGUNTA_INICIAL_DEL_USUARIO. Ordena la respuesta con párrafos o viñetas claras "
+            "cuando ayude. No cortes ideas a medias.\n"
+            f"{replay_ctx(obj_claro + chr(10) + internet_acc + chr(10) + execute_acc + chr(10) + test_acc, 'Revisor', 1400)}"
             f"{work_ctx(working_pool)}"
         )
         out_r = _ollama(
