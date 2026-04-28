@@ -1,0 +1,25 @@
+{
+  "name": "project-tests",
+  "version": "0.1.0",
+  "description": "Ejecuta la suite unittest del proyecto para validar cambios locales.",
+  "risk": "high",
+  "status": "validated",
+  "agent_enabled": true,
+  "agent_role": "AgenteSkill:project-tests",
+  "triggers": [
+    "tests",
+    "pruebas",
+    "validar",
+    "regresion",
+    "unittest"
+  ],
+  "permissions": [
+    "terminal:run",
+    "python:execute"
+  ],
+  "entrypoint": "python -m unittest discover -s tests",
+  "executor": "terminal_command",
+  "command": "python -m unittest discover -s tests",
+  "cwd": ".",
+  "instructions": "Usa este skill cuando el objetivo requiera verificar que los cambios del sistema no rompieron la suite de pruebas."
+}

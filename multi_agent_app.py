@@ -22,6 +22,7 @@ from plastic_swarm_state import (
     SwarmPlasticStore,
     start_background_weights_load,
 )
+from task_runtime import TaskRuntime
 from tool_library import ToolLibrary
 from unified_fly_memory import SharedFlyMemory
 
@@ -41,12 +42,19 @@ def _role_tag(role: str) -> str:
         return "q"
     if role.startswith("GestorHerramientas"):
         return "g"
+    if role.startswith("AgenteSkill") or role.startswith("AgentesModulares"):
+        return "a"
+    if role.startswith("Skills"):
+        return "k"
     if role.startswith("Prueba"):
         return "t"
     return {
         "Entiende": "e",
         "Planifica": "p",
         "GestorHerramientas": "g",
+        "AgentesModulares": "a",
+        "Skills": "k",
+        "Runtime": "u",
         "Revisor": "r",
         "Ciclo": "c",
         "Memoria": "m",
@@ -107,6 +115,7 @@ def main() -> None:
     store = SwarmPlasticStore()
     experience_replay = SharedExperienceReplay(capacity=args.replay_capacity, embed_dim=40)
     tool_library = ToolLibrary(embed_dim=40)
+    task_runtime = TaskRuntime()
     weights_ready = threading.Event()
     start_background_weights_load(store, shared_mem, plastic_aux, weights_ready)
 
@@ -149,6 +158,9 @@ def main() -> None:
         ("p", "#38bdf8"),
         ("i", "#2dd4bf"),
         ("g", "#c084fc"),
+        ("a", "#f0abfc"),
+        ("k", "#f9a8d4"),
+        ("u", "#93c5fd"),
         ("d", "#a78bfa"),
         ("x", "#34d399"),
         ("t", "#fb7185"),
@@ -214,6 +226,18 @@ def main() -> None:
     spin_discuss = _spin(cf, "Discutir:", args.discuss, 1, 4)
     spin_execute = _spin(cf, "Ejecutar:", args.execute, 1, 4)
     spin_test = _spin(cf, "Probar:", args.test, 1, 3)
+    autonomous_var = tk.BooleanVar(value=False)
+    tk.Checkbutton(
+        cf,
+        text="Autónomo",
+        variable=autonomous_var,
+        bg="#1a1d24",
+        fg="#f3f4f6",
+        selectcolor="#252936",
+        activebackground="#1a1d24",
+        activeforeground="#f3f4f6",
+        font=("Segoe UI", 9),
+    ).pack(side="left", padx=(0, 12))
 
     busy = {"v": False}
 
@@ -234,6 +258,291 @@ def main() -> None:
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
+
+    def approve_tool_call(tool: object, request: dict, reason: str) -> bool:
+        result = {"approved": False}
+        ready = threading.Event()
+        name = getattr(tool, "name", "herramienta")
+        risk = getattr(tool, "risk", "?")
+
+        def ask() -> None:
+            preview = str(request)
+            if len(preview) > 1200:
+                preview = preview[:1200] + "..."
+            result["approved"] = messagebox.askyesno(
+                "Aprobar herramienta",
+                (
+                    f"La herramienta '{name}' requiere aprobación.\n"
+                    f"Riesgo: {risk}\n"
+                    f"Motivo: {reason}\n\n"
+                    f"Solicitud:\n{preview}\n\n"
+                    "¿Permitir esta ejecución?"
+                ),
+                parent=root,
+            )
+            ready.set()
+
+        root.after(0, ask)
+        ready.wait()
+        return bool(result["approved"])
+
+    def open_audit_window() -> None:
+        win = tk.Toplevel(root)
+        win.title("Auditoría · runtime agentico")
+        win.geometry("980x620")
+        win.configure(bg="#1a1d24")
+
+        top = tk.Frame(win, bg="#1a1d24")
+        top.pack(fill="x", padx=10, pady=(10, 6))
+        tk.Label(
+            top,
+            text="Objetivos recientes y llamadas de herramientas",
+            bg="#1a1d24",
+            fg="#e6edf3",
+            font=("Segoe UI", 11, "bold"),
+        ).pack(side="left")
+
+        body = tk.Frame(win, bg="#1a1d24")
+        body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        tasks_box = tk.Listbox(
+            body,
+            width=42,
+            bg="#0f1117",
+            fg="#e6edf3",
+            selectbackground="#374151",
+            activestyle="none",
+            font=("Consolas", 9),
+        )
+        tasks_box.pack(side="left", fill="y", padx=(0, 8))
+
+        details = scrolledtext.ScrolledText(
+            body,
+            wrap=tk.WORD,
+            font=("Consolas", 9),
+            bg="#0f1117",
+            fg="#e6edf3",
+            insertbackground="#e6edf3",
+        )
+        details.pack(side="left", fill="both", expand=True)
+
+        state: dict[str, list[dict]] = {"tasks": []}
+
+        def _task_label(task: dict) -> str:
+            objective = str(task.get("objective") or "").replace("\n", " ")[:34]
+            status = str(task.get("status") or "?")
+            updated = str(task.get("updated") or "")
+            return f"{updated} | {status:<10} | {objective}"
+
+        def render_task(index: int) -> None:
+            details.delete("1.0", tk.END)
+            tasks = state["tasks"]
+            if not (0 <= index < len(tasks)):
+                details.insert(tk.END, "Selecciona un objetivo para ver su auditoría.")
+                return
+            task = tasks[index]
+            calls = task_runtime.tool_calls_for_task(str(task["task_id"]), limit=80)
+            lines = [
+                f"TASK_ID: {task['task_id']}",
+                f"estado: {task.get('status')}",
+                f"creado: {task.get('created')}",
+                f"actualizado: {task.get('updated')}",
+                f"objetivo:\n{task.get('objective')}",
+                "",
+                f"tool_calls: {len(calls)}",
+                "═" * 80,
+            ]
+            for call in calls:
+                status = "PERMITIDA" if call.get("allowed") else "BLOQUEADA"
+                lines.extend(
+                    [
+                        f"#{call.get('id')} · {call.get('created')} · {call.get('tool_name')} [{call.get('risk')}] {status}",
+                        f"decisión: {call.get('decision')}",
+                        f"duración: {float(call.get('duration_s') or 0.0):.2f}s",
+                        f"request:\n{call.get('request') or '{}'}",
+                    ]
+                )
+                if call.get("output"):
+                    lines.append(f"output:\n{str(call.get('output'))[:1800]}")
+                if call.get("error"):
+                    lines.append(f"error:\n{str(call.get('error'))[:1200]}")
+                lines.append("-" * 80)
+            details.insert(tk.END, "\n".join(lines))
+
+        def refresh() -> None:
+            state["tasks"] = task_runtime.list_tasks(limit=40)
+            tasks_box.delete(0, tk.END)
+            for task in state["tasks"]:
+                tasks_box.insert(tk.END, _task_label(task))
+            if state["tasks"]:
+                tasks_box.selection_set(0)
+                render_task(0)
+            else:
+                details.delete("1.0", tk.END)
+                details.insert(tk.END, "Aún no hay objetivos auditados.")
+
+        def on_select(_event=None) -> None:
+            sel = tasks_box.curselection()
+            if sel:
+                render_task(int(sel[0]))
+
+        tk.Button(
+            top,
+            text="Actualizar",
+            command=refresh,
+            bg="#374151",
+            fg="white",
+            relief="flat",
+            padx=10,
+        ).pack(side="right")
+        tasks_box.bind("<<ListboxSelect>>", on_select)
+        refresh()
+
+    def open_memory_window() -> None:
+        win = tk.Toplevel(root)
+        win.title("Memoria · herramientas reutilizables")
+        win.geometry("980x620")
+        win.configure(bg="#1a1d24")
+
+        top = tk.Frame(win, bg="#1a1d24")
+        top.pack(fill="x", padx=10, pady=(10, 6))
+        tk.Label(
+            top,
+            text="Biblioteca de herramientas reutilizables",
+            bg="#1a1d24",
+            fg="#e6edf3",
+            font=("Segoe UI", 11, "bold"),
+        ).pack(side="left")
+
+        body = tk.Frame(win, bg="#1a1d24")
+        body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        tools_box = tk.Listbox(
+            body,
+            width=44,
+            bg="#0f1117",
+            fg="#e6edf3",
+            selectbackground="#374151",
+            activestyle="none",
+            font=("Consolas", 9),
+        )
+        tools_box.pack(side="left", fill="y", padx=(0, 8))
+
+        details = scrolledtext.ScrolledText(
+            body,
+            wrap=tk.WORD,
+            font=("Consolas", 9),
+            bg="#0f1117",
+            fg="#e6edf3",
+            insertbackground="#e6edf3",
+        )
+        details.pack(side="left", fill="both", expand=True)
+
+        state: dict[str, list] = {"tools": []}
+
+        def _label(tool) -> str:
+            return (
+                f"ok={tool.success_count:<2} fail={tool.failure_count:<2} "
+                f"{tool.kind[:10]:<10} {tool.name[:28]}"
+            )
+
+        def selected_tool():
+            sel = tools_box.curselection()
+            if not sel:
+                return None
+            idx = int(sel[0])
+            if 0 <= idx < len(state["tools"]):
+                return state["tools"][idx]
+            return None
+
+        def render(index: int) -> None:
+            details.delete("1.0", tk.END)
+            if not (0 <= index < len(state["tools"])):
+                details.insert(tk.END, "Selecciona una herramienta.")
+                return
+            tool = state["tools"][index]
+            details.insert(
+                tk.END,
+                "\n".join(
+                    [
+                        f"NOMBRE: {tool.name}",
+                        f"TIPO: {tool.kind}",
+                        f"OK/FAIL: {tool.success_count}/{tool.failure_count}",
+                        f"ENTRYPOINT: {tool.entrypoint or '-'}",
+                        f"ACTIVADORES:\n{tool.trigger_terms or '-'}",
+                        f"OBJETIVO:\n{tool.objective or '-'}",
+                        f"INSTRUCCIONES:\n{tool.instructions or '-'}",
+                        f"EVIDENCIA:\n{tool.evidence or '-'}",
+                    ]
+                ),
+            )
+
+        def refresh_tools() -> None:
+            state["tools"] = tool_library.list_entries(limit=100)
+            tools_box.delete(0, tk.END)
+            for tool in state["tools"]:
+                tools_box.insert(tk.END, _label(tool))
+            details.delete("1.0", tk.END)
+            if state["tools"]:
+                tools_box.selection_set(0)
+                render(0)
+            else:
+                details.insert(tk.END, "Aún no hay herramientas reutilizables guardadas.")
+
+        def on_select(_event=None) -> None:
+            sel = tools_box.curselection()
+            if sel:
+                render(int(sel[0]))
+
+        def mark_bad() -> None:
+            tool = selected_tool()
+            if tool is None:
+                return
+            tool_library.mark_failure(tool.name, tool.entrypoint)
+            refresh_tools()
+
+        def delete_tool() -> None:
+            tool = selected_tool()
+            if tool is None:
+                return
+            if not messagebox.askyesno(
+                "Borrar memoria",
+                f"¿Borrar la herramienta reutilizable '{tool.name}'?",
+                parent=win,
+            ):
+                return
+            tool_library.delete(tool.name, tool.entrypoint)
+            refresh_tools()
+
+        tk.Button(
+            top,
+            text="Actualizar",
+            command=refresh_tools,
+            bg="#374151",
+            fg="white",
+            relief="flat",
+            padx=10,
+        ).pack(side="right", padx=(8, 0))
+        tk.Button(
+            top,
+            text="Borrar",
+            command=delete_tool,
+            bg="#7f1d1d",
+            fg="white",
+            relief="flat",
+            padx=10,
+        ).pack(side="right", padx=(8, 0))
+        tk.Button(
+            top,
+            text="Marcar fallida",
+            command=mark_bad,
+            bg="#92400e",
+            fg="white",
+            relief="flat",
+            padx=10,
+        ).pack(side="right", padx=(8, 0))
+        tools_box.bind("<<ListboxSelect>>", on_select)
+        refresh_tools()
 
     def on_run(_ev=None) -> None:
         if busy["v"]:
@@ -268,6 +577,9 @@ def main() -> None:
                     plastic_aux=plastic_aux,
                     experience_replay=experience_replay,
                     tool_library=tool_library,
+                    task_runtime=task_runtime,
+                    autonomous_mode=bool(autonomous_var.get()),
+                    approval_callback=approve_tool_call,
                     weights_ready=weights_ready,
                     num_predict=args.num_predict,
                     num_predict_final=args.num_predict_final,
@@ -315,6 +627,26 @@ def main() -> None:
         relief="flat",
         padx=12,
     ).pack(side="right")
+    tk.Button(
+        row,
+        text="Auditoría",
+        command=open_audit_window,
+        bg="#374151",
+        fg="white",
+        activebackground="#4b5563",
+        relief="flat",
+        padx=12,
+    ).pack(side="right", padx=(0, 8))
+    tk.Button(
+        row,
+        text="Memoria",
+        command=open_memory_window,
+        bg="#374151",
+        fg="white",
+        activebackground="#4b5563",
+        relief="flat",
+        padx=12,
+    ).pack(side="right", padx=(0, 8))
     goal_entry.bind("<Return>", on_run)
 
     root.mainloop()

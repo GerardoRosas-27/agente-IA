@@ -20,6 +20,7 @@ from typing import Callable
 
 import torch
 
+from agent_lifecycle import run_skill_agent_lifecycle
 from multi_agent_orchestrator import _ollama, syntax_score, text_hash_embed
 from node_probe_tool import parse_node_probe_request, run_node_probe_script
 from plastic_swarm_state import (
@@ -28,8 +29,11 @@ from plastic_swarm_state import (
     SharedExperienceReplay,
     WorkingMemoryPool,
 )
+from skill_manager import SkillManager
 from terminal_tool import parse_terminal_command_request, run_terminal_command
+from task_runtime import TaskRuntime
 from tool_library import ToolLibrary, parse_tool_memory_request
+from tool_registry import ToolRegistry, build_default_tool_registry
 from unified_fly_memory import SharedFlyMemory
 
 _TRUE_ENV = {"1", "true", "yes", "si", "sí", "on", "y"}
@@ -451,6 +455,11 @@ def run_objective_pipeline(
     internet_search_fn: Callable[..., str] | None = None,
     terminal_run_fn: Callable[..., object] | None = None,
     tool_library: ToolLibrary | None = None,
+    skill_manager: SkillManager | None = None,
+    task_runtime: TaskRuntime | None = None,
+    tool_registry: ToolRegistry | None = None,
+    autonomous_mode: bool = False,
+    approval_callback: Callable[[object, dict, str], bool] | None = None,
     on_log: Callable[[str, str], None] | None = None,
     on_cycle_checkpoint: Callable[[], None] | None = None,
 ) -> tuple[str, int, float, bool]:
@@ -490,14 +499,45 @@ def run_objective_pipeline(
     terminal_max_output = _env_int("TERMINAL_AGENT_MAX_OUTPUT_CHARS", 4000, lo=500, hi=12000)
     tool_manager_enabled = _env_bool("TOOL_LIBRARY_AGENT_ENABLED", True)
     tool_library_max_results = _env_int("TOOL_LIBRARY_MAX_RESULTS", 4, lo=1, hi=8)
+    skill_manager_enabled = _env_bool("SKILL_MANAGER_ENABLED", True)
+    skill_manager_max_results = _env_int("SKILL_MANAGER_MAX_RESULTS", 5, lo=1, hi=10)
+    skill_execution_enabled = _env_bool("SKILL_EXECUTION_AGENT_ENABLED", True)
     auxiliary_fail_open = _env_bool("AUXILIARY_AGENTS_FAIL_OPEN", True)
     search_fn = internet_search_fn or web_research_agent_turn
     run_terminal_fn = terminal_run_fn or run_terminal_command
     tools = tool_library if tool_library is not None else (ToolLibrary() if tool_manager_enabled else None)
+    active_skill_manager = (
+        skill_manager if skill_manager is not None else (SkillManager() if skill_manager_enabled else None)
+    )
+    runtime = task_runtime or TaskRuntime()
+    project_root = Path(__file__).resolve().parent
+    registry = tool_registry or build_default_tool_registry(
+        search_fn=search_fn,
+        run_terminal_fn=run_terminal_fn,
+        tool_library=tools,
+        project_root=str(project_root),
+        skill_manager=active_skill_manager,
+        autonomous=autonomous_mode,
+        approval_callback=approval_callback,
+    )
 
     def logb(role: str, content: str) -> None:
         cycle_buffer.add(role, content)
         log(role, content)
+
+    def remember_agent_output(
+        role: str,
+        content: str,
+        *,
+        salience: float,
+        mem_cur: torch.Tensor,
+        cycle_events: list[tuple[str, str]],
+        working_pool: WorkingMemoryPool,
+    ) -> torch.Tensor:
+        logb(role, content)
+        cycle_events.append((role, content))
+        working_pool.add(role, content, salience=salience)
+        return _mem_step(memory, mem_cur, step_slot(), content)
 
     def replay_ctx(query: str, agent_key: str, max_chars: int = 1200) -> str:
         if experience_replay is None:
@@ -533,6 +573,16 @@ def run_objective_pipeline(
     )
 
     raw = raw_user_objective.strip()[:8000]
+    task_id = runtime.start_task(
+        raw,
+        metadata={
+            "model": model,
+            "max_cycles": int(max_cycles),
+            "registry": [tool.name for tool in registry.list_tools()],
+            "autonomous_mode": bool(autonomous_mode),
+        },
+    )
+    log("Runtime", f"task_id={task_id}\n{registry.context()[:1800]}")
     slot = 0
 
     def step_slot() -> int:
@@ -580,11 +630,17 @@ def run_objective_pipeline(
         if tool_manager_enabled and tools is not None:
             log("Sistema", "── GestorHerramientas (recupera herramientas previas) ──")
             try:
-                tool_ctx = tools.context(
-                    f"{obj_claro}\n{crit_txt}\n{raw[:1200]}",
-                    limit=tool_library_max_results,
-                    max_chars=1800,
+                tool_ctx = registry.call(
+                    "tool_library.context",
+                    {
+                        "query": f"{obj_claro}\n{crit_txt}\n{raw[:1200]}",
+                        "limit": tool_library_max_results,
+                        "max_chars": 1800,
+                    },
+                    runtime=runtime,
+                    task_id=task_id,
                 )
+                tool_ctx = str(tool_ctx or "").strip()
             except Exception as exc:
                 tool_ctx = ""
                 log("GestorHerramientas", f"No se pudo consultar biblioteca: {exc}")
@@ -595,6 +651,101 @@ def run_objective_pipeline(
                 mem_cur = _mem_step(memory, mem_cur, step_slot(), tool_ctx)
             else:
                 log("GestorHerramientas", "No hay herramientas reutilizables relevantes; continúa.")
+
+        skill_ctx = ""
+        modular_agent_ctx = ""
+        modular_agent_specs: list[dict] = []
+        if skill_manager_enabled and active_skill_manager is not None:
+            log("Sistema", "── Skills (recupera plugins instalados) ──")
+            try:
+                skill_ctx = registry.call(
+                    "skills.context",
+                    {
+                        "query": f"{obj_claro}\n{crit_txt}\n{raw[:1200]}",
+                        "limit": skill_manager_max_results,
+                        "max_chars": 1600,
+                    },
+                    runtime=runtime,
+                    task_id=task_id,
+                )
+                skill_ctx = str(skill_ctx or "").strip()
+            except Exception as exc:
+                skill_ctx = ""
+                log("Skills", f"No se pudo consultar skills: {exc}")
+            if skill_ctx:
+                logb("Skills", skill_ctx)
+                cycle_events.append(("Skills", skill_ctx))
+                working_pool.add("Skills", skill_ctx, salience=0.88)
+                mem_cur = _mem_step(memory, mem_cur, step_slot(), skill_ctx)
+                tool_ctx = "\n\n".join([part for part in [tool_ctx, skill_ctx] if part])
+            else:
+                log("Skills", "No hay skills relevantes; continúa.")
+
+            try:
+                modular_agent_specs = active_skill_manager.agent_specs(
+                    f"{obj_claro}\n{crit_txt}\n{raw[:1200]}",
+                    limit=skill_manager_max_results,
+                )
+                modular_agent_ctx = registry.call(
+                    "skills.agents_context",
+                    {
+                        "query": f"{obj_claro}\n{crit_txt}\n{raw[:1200]}",
+                        "limit": skill_manager_max_results,
+                        "max_chars": 1600,
+                    },
+                    runtime=runtime,
+                    task_id=task_id,
+                )
+                modular_agent_ctx = str(modular_agent_ctx or "").strip()
+            except Exception as exc:
+                modular_agent_specs = []
+                modular_agent_ctx = ""
+                log("Skills", f"No se pudo consultar agentes modulares: {exc}")
+            if modular_agent_ctx:
+                logb("AgentesModulares", modular_agent_ctx)
+                cycle_events.append(("AgentesModulares", modular_agent_ctx))
+                working_pool.add("AgentesModulares", modular_agent_ctx, salience=0.89)
+                mem_cur = _mem_step(memory, mem_cur, step_slot(), modular_agent_ctx)
+
+        skill_run_acc = ""
+        if skill_execution_enabled and modular_agent_specs:
+            for spec in modular_agent_specs:
+                role_name = str(spec.get("name") or f"AgenteSkill:{spec.get('skill_name', 'skill')}")
+                try:
+                    agent_result = run_skill_agent_lifecycle(
+                        spec=spec,
+                        objective=obj_claro,
+                        criteria=crit_txt,
+                        llm_call=lambda system, user, budget: _ollama(
+                            llm_chat,
+                            model,
+                            system,
+                            user,
+                            num_predict=budget,
+                        ),
+                        registry=registry,
+                        runtime=runtime,
+                        task_id=task_id,
+                        num_predict=_role_budget(num_predict + 30, "Prueba", cycle=cyc),
+                    )
+                    if agent_result.contributed:
+                        mem_cur = remember_agent_output(
+                            agent_result.role,
+                            agent_result.content,
+                            salience=0.83,
+                            mem_cur=mem_cur,
+                            cycle_events=cycle_events,
+                            working_pool=working_pool,
+                        )
+                        skill_run_acc = (
+                            "\n---\n".join([skill_run_acc, agent_result.content])
+                            if skill_run_acc
+                            else agent_result.content
+                        )
+                except Exception as exc:
+                    if not auxiliary_fail_open:
+                        raise
+                    log(role_name, f"No pudo aportar: {exc}")
 
         log("Sistema", "── Planificador (plan numerado) ──")
         ctx = _ctx_snip(memory, mem_cur, 0)
@@ -633,10 +784,15 @@ def run_objective_pipeline(
         if internet_enabled:
             log("Sistema", "── Internet (busca contexto externo si hay conexión) ──")
             try:
-                internet_acc = search_fn(
-                    f"{obj_claro}\n{crit_txt}\n{out_p[:900]}",
-                    max_results=web_max_results,
-                    timeout=web_timeout,
+                internet_acc = registry.call(
+                    "internet.search",
+                    {
+                        "query": f"{obj_claro}\n{crit_txt}\n{out_p[:900]}",
+                        "max_results": web_max_results,
+                        "timeout": web_timeout,
+                    },
+                    runtime=runtime,
+                    task_id=task_id,
                 ).strip()
             except Exception:
                 internet_acc = ""
@@ -787,10 +943,15 @@ def run_objective_pipeline(
                     )
                     needed, reason, script = parse_python_probe_request(out_py_req)
                     if needed:
-                        run_result = run_python_probe_script(
-                            script,
-                            timeout=probe_timeout,
-                            max_chars=probe_max_chars,
+                        run_result = registry.call(
+                            "probe.python",
+                            {
+                                "script": script,
+                                "timeout": probe_timeout,
+                                "max_chars": probe_max_chars,
+                            },
+                            runtime=runtime,
+                            task_id=task_id,
                         )
                         python_probe_acc = (
                             f"Motivo: {reason or 'verificación solicitada'}\n"
@@ -856,10 +1017,15 @@ def run_objective_pipeline(
                     )
                     needed, reason, script = parse_node_probe_request(out_node_req)
                     if needed:
-                        run_result = run_node_probe_script(
-                            script,
-                            timeout=node_probe_timeout,
-                            max_chars=node_probe_max_chars,
+                        run_result = registry.call(
+                            "probe.node",
+                            {
+                                "script": script,
+                                "timeout": node_probe_timeout,
+                                "max_chars": node_probe_max_chars,
+                            },
+                            runtime=runtime,
+                            task_id=task_id,
                         )
                         node_probe_acc = (
                             f"Motivo: {reason or 'verificación Node.js solicitada'}\n"
@@ -910,12 +1076,16 @@ def run_objective_pipeline(
                 )
                 term_req = parse_terminal_command_request(out_term_req)
                 if term_req.needed:
-                    result_obj = run_terminal_fn(
-                        term_req.command,
-                        project_root=Path(__file__).resolve().parent,
-                        cwd=term_req.cwd,
-                        timeout=terminal_timeout,
-                        max_output_chars=terminal_max_output,
+                    result_obj = registry.call(
+                        "terminal.run",
+                        {
+                            "command": term_req.command,
+                            "cwd": term_req.cwd,
+                            "timeout": terminal_timeout,
+                            "max_output_chars": terminal_max_output,
+                        },
+                        runtime=runtime,
+                        task_id=task_id,
                     )
                     rendered = (
                         result_obj.render()
@@ -1046,7 +1216,12 @@ def run_objective_pipeline(
                             success_count=tool_memory.success_count,
                             failure_count=tool_memory.failure_count,
                         )
-                    tools.upsert(tool_memory)
+                    registry.call(
+                        "tool_library.upsert",
+                        {"tool": tool_memory},
+                        runtime=runtime,
+                        task_id=task_id,
+                    )
                     saved_msg = (
                         f"Guardada herramienta reutilizable: {tool_memory.name} "
                         f"({tool_memory.kind}) -> {tool_memory.entrypoint or 'ver instrucciones'}"
@@ -1110,10 +1285,20 @@ def run_objective_pipeline(
 
         if reached:
             log("Sistema", "Objetivo certificado por el Revisor.")
+            runtime.finish_task(
+                task_id,
+                status="succeeded",
+                metadata={"cycles": cycles_used, "last_loss": last_loss},
+            )
             return final_txt, cycles_used, last_loss, True
 
         if cyc + 1 >= max_cycles:
             log("Sistema", "Máximo de ciclos; última RESPUESTA_FINAL del Revisor.")
+            runtime.finish_task(
+                task_id,
+                status="max_cycles",
+                metadata={"cycles": cycles_used, "last_loss": last_loss},
+            )
             return final_txt, cycles_used, last_loss, False
 
         log(

@@ -1,0 +1,23 @@
+{
+  "name": "runtime-audit",
+  "version": "0.1.0",
+  "description": "Consulta la auditoria del runtime agentico: objetivos, tool calls, decisiones, riesgos, outputs y errores.",
+  "risk": "low",
+  "status": "validated",
+  "agent_enabled": true,
+  "agent_role": "AgenteSkill:runtime-audit",
+  "triggers": [
+    "auditoria",
+    "runtime",
+    "tool calls",
+    "historial",
+    "permisos",
+    "ejecuciones"
+  ],
+  "permissions": [
+    "sqlite:read",
+    "ui:read"
+  ],
+  "entrypoint": "multi_agent_app.open_audit_window",
+  "instructions": "Usa el boton Auditoria de la interfaz para inspeccionar objetivos recientes y llamadas de herramientas registradas por TaskRuntime."
+}

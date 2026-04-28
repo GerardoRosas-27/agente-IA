@@ -108,6 +108,101 @@ class TestSharedExperienceReplay(unittest.TestCase):
         self.assertIn("sistema mejorado", final)
         self.assertIn("Procedimental", ctx)
 
+    def test_objective_pipeline_records_modular_agent_in_shared_replay(self) -> None:
+        import json
+        import torch
+
+        from objective_agent_cycle import run_objective_pipeline
+        from plastic_swarm_state import CycleBuffer, SharedExperienceReplay
+        from skill_manager import SkillManager
+        from tool_library import ToolLibrary
+        from tool_registry import build_default_tool_registry
+        from unified_fly_memory import SharedFlyMemory
+
+        def fake_chat(_model, messages, _options):
+            system = messages[0]["content"]
+            if "INTERPRETE" in system:
+                content = "OBJETIVO_CLARO: validar tests\nCRITERIO_1: usar agente especialista"
+            elif "AgenteSkill:demo" in system:
+                content = (
+                    '{"aporta": true, "ejecutar": false, '
+                    '"motivo": "aplica", "nota": "especialista demo aporto evidencia"}'
+                )
+            elif "REVISOR FINAL" in system:
+                content = (
+                    "OBJETIVO_ALCANZADO: SI\nMOTIVO: -\nRETROALIMENTACION: -\n"
+                    "RESPUESTA_FINAL: completado"
+                )
+            else:
+                content = "paso util"
+            return {"message": {"content": content, "role": "assistant"}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = Path(tmp) / "skills" / "demo"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "name": "demo",
+                        "description": "Agente demo para tests",
+                        "risk": "low",
+                        "status": "validated",
+                        "agent_enabled": True,
+                        "agent_role": "AgenteSkill:demo",
+                        "triggers": ["tests", "validar"],
+                        "instructions": "Aporta evidencia demo.",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            replay = SharedExperienceReplay(
+                Path(tmp) / "replay.sqlite",
+                capacity=24,
+                embed_dim=16,
+            )
+            tool_library = ToolLibrary(Path(tmp) / "tools.sqlite", embed_dim=16)
+            skill_manager = SkillManager(Path(tmp) / "skills")
+            registry = build_default_tool_registry(
+                search_fn=lambda *_args, **_kwargs: "",
+                run_terminal_fn=lambda *_args, **_kwargs: "",
+                tool_library=tool_library,
+                project_root=tmp,
+                skill_manager=skill_manager,
+            )
+            memory = SharedFlyMemory(
+                n_slots=4,
+                mem_dim=32,
+                msg_dim=40,
+                n_agents_max=8,
+                writer_hidden=32,
+                blank_init=True,
+            ).to(torch.device("cpu"))
+
+            final, _cycles, _loss, ok = run_objective_pipeline(
+                "validar tests con agente demo",
+                memory,
+                "fake",
+                fake_chat,
+                cycle_buffer=CycleBuffer(),
+                experience_replay=replay,
+                max_cycles=1,
+                n_discuss=1,
+                n_execute=1,
+                n_test=1,
+                internet_agent_enabled=False,
+                python_test_agent_enabled=False,
+                node_test_agent_enabled=False,
+                terminal_agent_enabled=False,
+                tool_library=tool_library,
+                skill_manager=skill_manager,
+                tool_registry=registry,
+            )
+            ctx = replay.retrieval_context("especialista demo", agent_key="AgenteSkill:demo")
+
+        self.assertTrue(ok)
+        self.assertIn("completado", final)
+        self.assertIn("AgenteSkill:demo", ctx)
+
 
 if __name__ == "__main__":
     unittest.main()

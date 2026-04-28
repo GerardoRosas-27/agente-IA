@@ -230,6 +230,54 @@ class ToolLibrary:
         finally:
             conn.close()
 
+    def delete(self, name: str, entrypoint: str = "") -> int:
+        if not name.strip():
+            return 0
+        conn = self._connect()
+        try:
+            if entrypoint.strip():
+                cur = conn.execute(
+                    "DELETE FROM tool_library WHERE name=? AND entrypoint=?",
+                    (name.strip(), entrypoint.strip()),
+                )
+            else:
+                cur = conn.execute(
+                    "DELETE FROM tool_library WHERE name=?",
+                    (name.strip(),),
+                )
+            conn.commit()
+            return int(cur.rowcount or 0)
+        finally:
+            conn.close()
+
+    def list_entries(self, *, limit: int = 80) -> list[ToolMemory]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """SELECT name, kind, objective, trigger_terms, entrypoint, instructions,
+                          evidence, success_count, failure_count
+                   FROM tool_library
+                   ORDER BY (success_count - failure_count) DESC, updated DESC
+                   LIMIT ?""",
+                (max(1, int(limit)),),
+            ).fetchall()
+        finally:
+            conn.close()
+        return [
+            ToolMemory(
+                name=str(row[0]),
+                kind=str(row[1] or "procedimiento"),
+                objective=str(row[2] or ""),
+                trigger_terms=str(row[3] or ""),
+                entrypoint=str(row[4] or ""),
+                instructions=str(row[5] or ""),
+                evidence=str(row[6] or ""),
+                success_count=int(row[7] or 0),
+                failure_count=int(row[8] or 0),
+            )
+            for row in rows
+        ]
+
     def search(self, query: str, *, limit: int = 4) -> list[tuple[float, ToolMemory]]:
         q = query.strip()
         if not q:
