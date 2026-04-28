@@ -29,6 +29,7 @@ class ToolMemory:
     evidence: str
     success_count: int = 1
     failure_count: int = 0
+    confidence: float = 0.5
 
 
 def _clean(text: str, limit: int) -> str:
@@ -105,12 +106,20 @@ class ToolLibrary:
                 evidence TEXT,
                 success_count INTEGER DEFAULT 1,
                 failure_count INTEGER DEFAULT 0,
+                confidence REAL DEFAULT 0.5,
                 created TEXT,
                 updated TEXT,
                 embedding TEXT,
                 UNIQUE(name, entrypoint)
             )"""
             )
+            for sql in (
+                "ALTER TABLE tool_library ADD COLUMN confidence REAL DEFAULT 0.5",
+            ):
+                try:
+                    conn.execute(sql)
+                except sqlite3.OperationalError:
+                    pass
             conn.commit()
         finally:
             conn.close()
@@ -167,8 +176,8 @@ class ToolLibrary:
             conn.execute(
                 """INSERT INTO tool_library
                    (name, kind, objective, trigger_terms, entrypoint, instructions, evidence,
-                    success_count, failure_count, created, updated, embedding)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    success_count, failure_count, confidence, created, updated, embedding)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(name, entrypoint) DO UPDATE SET
                        kind=excluded.kind,
                        objective=excluded.objective,
@@ -176,6 +185,7 @@ class ToolLibrary:
                        instructions=excluded.instructions,
                        evidence=excluded.evidence,
                        success_count=success_count + 1,
+                       confidence=min(1.0, confidence + 0.08),
                        updated=excluded.updated,
                        embedding=excluded.embedding""",
                 (
@@ -188,6 +198,7 @@ class ToolLibrary:
                     tool.evidence,
                     int(tool.success_count),
                     int(tool.failure_count),
+                    float(max(0.0, min(1.0, tool.confidence))),
                     created,
                     created,
                     self._embed_json(search_text),
@@ -215,14 +226,18 @@ class ToolLibrary:
             if entrypoint.strip():
                 conn.execute(
                     """UPDATE tool_library
-                       SET failure_count=failure_count + 1, updated=?
+                       SET failure_count=failure_count + 1,
+                           confidence=max(0.0, confidence - 0.12),
+                           updated=?
                        WHERE name=? AND entrypoint=?""",
                     (updated, name.strip(), entrypoint.strip()),
                 )
             else:
                 conn.execute(
                     """UPDATE tool_library
-                       SET failure_count=failure_count + 1, updated=?
+                       SET failure_count=failure_count + 1,
+                           confidence=max(0.0, confidence - 0.12),
+                           updated=?
                        WHERE name=?""",
                     (updated, name.strip()),
                 )
@@ -255,7 +270,7 @@ class ToolLibrary:
         try:
             rows = conn.execute(
                 """SELECT name, kind, objective, trigger_terms, entrypoint, instructions,
-                          evidence, success_count, failure_count
+                          evidence, success_count, failure_count, confidence
                    FROM tool_library
                    ORDER BY (success_count - failure_count) DESC, updated DESC
                    LIMIT ?""",
@@ -274,6 +289,7 @@ class ToolLibrary:
                 evidence=str(row[6] or ""),
                 success_count=int(row[7] or 0),
                 failure_count=int(row[8] or 0),
+                confidence=float(row[9] if row[9] is not None else 0.5),
             )
             for row in rows
         ]
@@ -287,7 +303,7 @@ class ToolLibrary:
         try:
             rows = conn.execute(
                 """SELECT name, kind, objective, trigger_terms, entrypoint, instructions,
-                          evidence, success_count, failure_count, embedding
+                          evidence, success_count, failure_count, confidence, embedding
                    FROM tool_library
                    ORDER BY updated DESC
                    LIMIT ?""",
@@ -308,6 +324,7 @@ class ToolLibrary:
                 evidence,
                 success_count,
                 failure_count,
+                confidence,
                 emb_json,
             ) = row
             text = "\n".join(
@@ -325,11 +342,19 @@ class ToolLibrary:
                 ev = json.loads(emb_json)
             except (json.JSONDecodeError, TypeError):
                 ev = []
-            reliability = max(-1.0, min(1.0, (int(success_count) - int(failure_count)) / max(1, int(success_count) + int(failure_count))))
+            reliability = max(
+                -1.0,
+                min(
+                    1.0,
+                    (int(success_count) - int(failure_count))
+                    / max(1, int(success_count) + int(failure_count)),
+                ),
+            )
             score = (
                 0.45 * self._cosine(qv, ev)
                 + 0.35 * self._lexical_score(q, text)
-                + 0.20 * reliability
+                + 0.12 * reliability
+                + 0.08 * float(confidence or 0.5)
             )
             ranked.append(
                 (
@@ -344,6 +369,7 @@ class ToolLibrary:
                         evidence=str(evidence or ""),
                         success_count=int(success_count or 0),
                         failure_count=int(failure_count or 0),
+                        confidence=float(confidence if confidence is not None else 0.5),
                     ),
                 )
             )
@@ -359,6 +385,7 @@ class ToolLibrary:
             lines.append(
                 "- "
                 f"{tool.name} [{tool.kind}] score={score:.2f} ok={tool.success_count} fail={tool.failure_count}; "
+                f"conf={tool.confidence:.2f}; "
                 f"uso={tool.entrypoint or 'ver instrucciones'}; "
                 f"activadores={tool.trigger_terms or '-'}; "
                 f"instrucciones={tool.instructions[:420]}"

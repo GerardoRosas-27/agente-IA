@@ -23,16 +23,18 @@ import torch
 from agent_lifecycle import run_skill_agent_lifecycle
 from multi_agent_orchestrator import _ollama, syntax_score, text_hash_embed
 from node_probe_tool import parse_node_probe_request, run_node_probe_script
+from persistent_memory import PersistentMemoryStore, parse_memory_curator_response
 from plastic_swarm_state import (
     BufferPlasticNet,
     CycleBuffer,
     SharedExperienceReplay,
     WorkingMemoryPool,
 )
-from skill_manager import SkillManager
+from skill_manager import SkillManager, parse_skill_learning_response
 from terminal_tool import parse_terminal_command_request, run_terminal_command
 from task_runtime import TaskRuntime
 from tool_library import ToolLibrary, parse_tool_memory_request
+from tool_preference_net import ToolPreferenceStore
 from tool_registry import ToolRegistry, build_default_tool_registry
 from unified_fly_memory import SharedFlyMemory
 
@@ -456,6 +458,8 @@ def run_objective_pipeline(
     terminal_run_fn: Callable[..., object] | None = None,
     tool_library: ToolLibrary | None = None,
     skill_manager: SkillManager | None = None,
+    persistent_memory: PersistentMemoryStore | None = None,
+    tool_preference_store: ToolPreferenceStore | None = None,
     task_runtime: TaskRuntime | None = None,
     tool_registry: ToolRegistry | None = None,
     autonomous_mode: bool = False,
@@ -502,12 +506,25 @@ def run_objective_pipeline(
     skill_manager_enabled = _env_bool("SKILL_MANAGER_ENABLED", True)
     skill_manager_max_results = _env_int("SKILL_MANAGER_MAX_RESULTS", 5, lo=1, hi=10)
     skill_execution_enabled = _env_bool("SKILL_EXECUTION_AGENT_ENABLED", True)
+    persistent_memory_enabled = _env_bool("PERSISTENT_MEMORY_ENABLED", True)
+    tool_preference_enabled = _env_bool("TOOL_PREFERENCE_NET_ENABLED", True)
+    tool_preference_rank_limit = _env_int("TOOL_PREFERENCE_RANK_LIMIT", 8, lo=1, hi=20)
     auxiliary_fail_open = _env_bool("AUXILIARY_AGENTS_FAIL_OPEN", True)
     search_fn = internet_search_fn or web_research_agent_turn
     run_terminal_fn = terminal_run_fn or run_terminal_command
     tools = tool_library if tool_library is not None else (ToolLibrary() if tool_manager_enabled else None)
     active_skill_manager = (
         skill_manager if skill_manager is not None else (SkillManager() if skill_manager_enabled else None)
+    )
+    memory_store = (
+        persistent_memory
+        if persistent_memory is not None
+        else (PersistentMemoryStore() if persistent_memory_enabled else None)
+    )
+    tool_pref = (
+        tool_preference_store
+        if tool_preference_store is not None
+        else (ToolPreferenceStore() if tool_preference_enabled else None)
     )
     runtime = task_runtime or TaskRuntime()
     project_root = Path(__file__).resolve().parent
@@ -583,6 +600,31 @@ def run_objective_pipeline(
         },
     )
     log("Runtime", f"task_id={task_id}\n{registry.context()[:1800]}")
+    tool_preference_ctx = ""
+    if tool_pref is not None:
+        try:
+            candidates = [(tool.name, tool.risk) for tool in registry.list_tools()]
+            tool_preference_ctx = tool_pref.context(
+                raw,
+                candidates,
+                limit=tool_preference_rank_limit,
+            )
+            if tool_preference_ctx:
+                log("ToolPreferenceNet", tool_preference_ctx)
+        except Exception as exc:
+            log("ToolPreferenceNet", f"No se pudo rankear herramientas: {exc}")
+    hot_memory_ctx = ""
+    session_memory_ctx = ""
+    if memory_store is not None:
+        try:
+            hot_memory_ctx = memory_store.hot_context(max_chars=2400)
+            session_memory_ctx = memory_store.search_sessions(raw, limit=4, max_chars=1400)
+            log(
+                "MemoriaPersistente",
+                "\n\n".join([part for part in [hot_memory_ctx, session_memory_ctx] if part])[:3200],
+            )
+        except Exception as exc:
+            log("MemoriaPersistente", f"No se pudo cargar memoria persistente: {exc}")
     slot = 0
 
     def step_slot() -> int:
@@ -611,7 +653,12 @@ def run_objective_pipeline(
             "Formalízalo; no repitas literal todo su texto como única salida.\n"
             "Formato:\nOBJETIVO_CLARO: ...\nCRITERIO_1: ...\nCRITERIO_2: ...\n"
         )
-        user_e = f"Entrada bruta (solo para ti):\n{raw}"
+        user_e = (
+            f"MEMORIA_PERSISTENTE:\n{hot_memory_ctx or '(vacía)'}\n\n"
+            f"SESIONES_RELEVANTES:\n{session_memory_ctx or '(sin coincidencias)'}\n\n"
+            f"PREFERENCIA_NEURONAL_HERRAMIENTAS:\n{tool_preference_ctx or '(sin datos)'}\n\n"
+            f"Entrada bruta (solo para ti):\n{raw}"
+        )
         out_e = _ollama(
             llm_chat,
             model,
@@ -763,6 +810,9 @@ def run_objective_pipeline(
         )
         user_p = (
             f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n{extra}\n"
+            f"MEMORIA_PERSISTENTE:\n{hot_memory_ctx[:1400] or '(vacía)'}\n\n"
+            f"SESIONES_RELEVANTES:\n{session_memory_ctx[:1000] or '(sin coincidencias)'}\n\n"
+            f"PREFERENCIA_NEURONAL_HERRAMIENTAS:\n{tool_preference_ctx[:1200] or '(sin datos)'}\n\n"
             f"HERRAMIENTAS_REUTILIZABLES:\n{tool_ctx or '(sin coincidencias)'}\n\n"
             f"{replay_ctx(obj_claro + chr(10) + crit_txt, 'Planifica')}"
             f"{work_ctx(working_pool)}"
@@ -1166,6 +1216,52 @@ def run_objective_pipeline(
             [out_e, out_p, internet_acc, discuss_acc, execute_acc, test_acc, terminal_acc, out_r]
         )
         reached, motivo_prev, final_txt, retro_prev = parse_final_verdict(out_r)
+        if memory_store is not None:
+            log("Sistema", "── CuradorMemoria (aprendizaje persistente) ──")
+            sys_mem = (
+                "Eres CURADOR_MEMORIA. Decide qué aprendizaje persistente guardar tras este ciclo.\n"
+                "Guarda solo preferencias del usuario, convenciones estables, lecciones operativas, "
+                "errores repetibles, workflows reutilizables o resumen de sesión. "
+                "NO guardes secretos, tokens, claves, datos temporales, logs largos ni cosas triviales.\n"
+                "Targets: memory (notas del agente), user (preferencias del usuario), session (resumen buscable).\n"
+                "Actions: add, replace, remove.\n"
+                "Devuelve SOLO JSON válido:\n"
+                "{\"acciones\": [{\"target\": \"memory\", \"action\": \"add\", \"content\": \"...\", \"reason\": \"...\"}]}\n"
+            )
+            user_mem = (
+                f"PREGUNTA_USUARIO:\n{raw[:1800]}\n\nOBJETIVO:\n{obj_claro}\n\n"
+                f"ALCANZADO: {reached}\nMOTIVO: {motivo_prev or '-'}\n\n"
+                f"PLAN:\n{out_p[:1200]}\n\nEJECUCION:\n{execute_acc[:1600]}\n\n"
+                f"PRUEBAS:\n{test_acc[:1400]}\n\n"
+                f"RESPUESTA_FINAL:\n{final_txt[:1200]}\n\n"
+                "Propón acciones de memoria persistente. JSON:"
+            )
+            try:
+                out_mem = _ollama(
+                    llm_chat,
+                    model,
+                    sys_mem,
+                    user_mem,
+                    num_predict=_role_budget(num_predict + 140, "Revisor", cycle=cyc),
+                )
+                actions = parse_memory_curator_response(out_mem)
+                applied = memory_store.apply_actions(actions)
+                memory_store.record_session(
+                    objective=obj_claro,
+                    summary=(
+                        f"alcanzado={reached}; final={final_txt[:700]}; "
+                        f"herramientas={tool_ctx[:400]}; pruebas={test_acc[:500]}"
+                    ),
+                    outcome="succeeded" if reached else "not_certified",
+                    metadata={"cycles": cycles_used, "task_id": task_id},
+                )
+                msg = ", ".join(applied) if applied else "sin acciones persistentes nuevas"
+                logb("CuradorMemoria", msg)
+                cycle_events.append(("CuradorMemoria", msg))
+            except Exception as exc:
+                if not auxiliary_fail_open:
+                    raise
+                log("CuradorMemoria", f"No se pudo curar memoria: {exc}")
         if tool_manager_enabled and reached and tools is not None:
             log("Sistema", "── GestorHerramientas (consolida reutilizable si aplica) ──")
             sys_tool_save = (
@@ -1234,6 +1330,49 @@ def run_objective_pipeline(
                 if not auxiliary_fail_open:
                     raise
                 log("GestorHerramientas", f"No se pudo consolidar herramienta: {exc}")
+        if reached and active_skill_manager is not None:
+            log("Sistema", "── AprendizSkills (crea/actualiza playbooks reutilizables) ──")
+            sys_skill_learn = (
+                "Eres APRENDIZ_SKILLS. Si el ciclo exitoso contiene un workflow reutilizable, "
+                "propón crear o actualizar skills como playbooks. No propongas skills para tareas triviales. "
+                "No guardes secretos. El skill debe tener instrucciones operativas claras.\n"
+                "Devuelve SOLO JSON válido:\n"
+                "{\"skills\": [{\"name\": \"...\", \"description\": \"...\", \"triggers\": [\"...\"], "
+                "\"instructions\": \"...\", \"evidence\": \"...\", \"risk\": \"low|moderate|high\", "
+                "\"executor\": \"\", \"command\": \"\", \"cwd\": \".\", \"status\": \"experimental\"}]}\n"
+            )
+            user_skill_learn = (
+                f"OBJETIVO:\n{obj_claro}\n\nPLAN:\n{out_p[:1600]}\n\n"
+                f"AGENTES_MODULARES:\n{skill_run_acc[:1800] or '(sin aporte)'}\n\n"
+                f"EJECUCION:\n{execute_acc[:2200]}\n\nPRUEBAS:\n{test_acc[:1800]}\n\n"
+                f"TERMINAL:\n{terminal_acc[:1200] or '(sin terminal)'}\n\n"
+                f"RESPUESTA_FINAL:\n{final_txt[:1000]}\n\n"
+                "Propón skills reutilizables si corresponde. JSON:"
+            )
+            try:
+                out_skill_learn = _ollama(
+                    llm_chat,
+                    model,
+                    sys_skill_learn,
+                    user_skill_learn,
+                    num_predict=_role_budget(num_predict + 180, "Revisor", cycle=cyc),
+                )
+                learned = parse_skill_learning_response(out_skill_learn)
+                saved = []
+                for item in learned:
+                    path = active_skill_manager.upsert_learned_skill(**item)
+                    saved.append(str(path.name))
+                msg = (
+                    "skills actualizados: " + ", ".join(saved)
+                    if saved
+                    else "sin skills nuevos útiles"
+                )
+                logb("AprendizSkills", msg)
+                cycle_events.append(("AprendizSkills", msg))
+            except Exception as exc:
+                if not auxiliary_fail_open:
+                    raise
+                log("AprendizSkills", f"No se pudo aprender skill: {exc}")
         if experience_replay is not None:
             try:
                 experience_replay.record_cycle(
@@ -1248,6 +1387,27 @@ def run_objective_pipeline(
                 )
             except Exception as exc:
                 log("Replay", f"No se pudo registrar replay compartido: {exc}")
+        if tool_pref is not None:
+            try:
+                calls = runtime.tool_calls_for_task(task_id, limit=200)
+                tp_loss, tp_stats = tool_pref.train_from_calls(
+                    obj_claro,
+                    calls,
+                    reached=reached,
+                    steps=10,
+                )
+                log(
+                    "ToolPreferenceNet",
+                    f"energia_libre={tp_stats['free_energy']:.4f} "
+                    f"prediccion={tp_stats['prediction_error']:.4f} "
+                    f"complejidad={tp_stats['complexity']:.6f} "
+                    f"entropia={tp_stats['entropy']:.6f} "
+                    f"loss={tp_loss:.4f} eventos={len(calls)}",
+                )
+            except Exception as exc:
+                if not auxiliary_fail_open:
+                    raise
+                log("ToolPreferenceNet", f"No se pudo entrenar preferencia de herramientas: {exc}")
         last_loss, free_energy_stats = _memory_learn(memory, mem_cur, corpus, final_txt)
 
         lines = cycle_buffer.lines()

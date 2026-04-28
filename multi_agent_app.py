@@ -40,6 +40,8 @@ def _role_tag(role: str) -> str:
         return "n"
     if role.startswith("Terminal"):
         return "q"
+    if role.startswith("ToolPreferenceNet"):
+        return "v"
     if role.startswith("GestorHerramientas"):
         return "g"
     if role.startswith("AgenteSkill") or role.startswith("AgentesModulares"):
@@ -52,6 +54,7 @@ def _role_tag(role: str) -> str:
         "Entiende": "e",
         "Planifica": "p",
         "GestorHerramientas": "g",
+        "ToolPreferenceNet": "v",
         "AgentesModulares": "a",
         "Skills": "k",
         "Runtime": "u",
@@ -167,6 +170,7 @@ def main() -> None:
         ("z", "#f97316"),
         ("n", "#facc15"),
         ("q", "#60a5fa"),
+        ("v", "#86efac"),
         ("r", "#6ee7b7"),
         ("c", "#94a3b8"),
         ("m", "#9ca3af"),

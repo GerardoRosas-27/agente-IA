@@ -135,6 +135,11 @@ class SkillManager:
         return f"skill.{safe}"
 
     @staticmethod
+    def slugify(name: str) -> str:
+        safe = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(name).strip().lower()).strip("-")
+        return safe or "learned-skill"
+
+    @staticmethod
     def _agent_name(skill: SkillManifest) -> str:
         safe = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", skill.agent_role.strip()).strip("-")
         return safe or f"AgenteSkill:{skill.name}"
@@ -214,6 +219,132 @@ class SkillManager:
                 f"instrucciones={str(spec['instructions'])[:320]}"
             )
         return "\n".join(lines)[: max(300, int(max_chars))]
+
+    def upsert_learned_skill(
+        self,
+        *,
+        name: str,
+        description: str,
+        triggers: list[str],
+        instructions: str,
+        evidence: str,
+        risk: str = "moderate",
+        executor: str = "",
+        command: str = "",
+        cwd: str = ".",
+        status: str = "experimental",
+    ) -> Path:
+        slug = self.slugify(name)
+        skill_dir = self.skills_dir / slug
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = skill_dir / "manifest.json"
+        old: dict[str, Any] = {}
+        if manifest_path.exists():
+            try:
+                old = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                old = {}
+        version = str(old.get("version") or "0.1.0")
+        success_count = int(old.get("success_count") or 0) + 1
+        failure_count = int(old.get("failure_count") or 0)
+        confidence = min(1.0, float(old.get("confidence", 0.45)) + 0.08)
+        merged_triggers = sorted(set(self._as_list(old.get("triggers")) + [t for t in triggers if t]))
+        manifest = {
+            "name": slug,
+            "version": version,
+            "description": description.strip()[:500],
+            "risk": risk if risk in {"low", "moderate", "high", "dangerous"} else "moderate",
+            "status": status,
+            "agent_enabled": True,
+            "agent_role": f"AgenteSkill:{slug}",
+            "triggers": merged_triggers[:24],
+            "permissions": self._as_list(old.get("permissions")),
+            "entrypoint": command or old.get("entrypoint", ""),
+            "executor": executor,
+            "command": command,
+            "cwd": cwd or ".",
+            "instructions": instructions.strip()[:1800],
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "confidence": confidence,
+        }
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        readme = skill_dir / "README.md"
+        readme.write_text(
+            "\n".join(
+                [
+                    f"# {slug}",
+                    "",
+                    f"Estado: {status} | Riesgo: {manifest['risk']} | Confianza: {confidence:.2f}",
+                    "",
+                    "## Cuándo usarlo",
+                    description.strip() or "Skill aprendido por el sistema.",
+                    "",
+                    "## Instrucciones",
+                    instructions.strip(),
+                    "",
+                    "## Evidencia",
+                    evidence.strip()[:2000] or "Sin evidencia textual.",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        examples = skill_dir / "examples.json"
+        previous = []
+        if examples.exists():
+            try:
+                loaded = json.loads(examples.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    previous = loaded
+            except (OSError, json.JSONDecodeError):
+                previous = []
+        previous.append({"triggers": merged_triggers[:8], "evidence": evidence.strip()[:800]})
+        examples.write_text(
+            json.dumps(previous[-20:], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return skill_dir
+
+
+def parse_skill_learning_response(text: str) -> list[dict[str, Any]]:
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I).strip()
+        raw = re.sub(r"\s*```$", "", raw).strip()
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    items = data.get("skills", data.get("habilidades", []))
+    if not isinstance(items, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", item.get("nombre", "")) or "").strip()
+        instructions = str(item.get("instructions", item.get("instrucciones", "")) or "").strip()
+        if not name or len(instructions) < 24:
+            continue
+        triggers = item.get("triggers", item.get("activadores", []))
+        out.append(
+            {
+                "name": name,
+                "description": str(item.get("description", item.get("descripcion", "")) or "").strip(),
+                "triggers": SkillManager._as_list(triggers),
+                "instructions": instructions,
+                "evidence": str(item.get("evidence", item.get("evidencia", "")) or "").strip(),
+                "risk": str(item.get("risk", "moderate") or "moderate").strip().lower(),
+                "executor": str(item.get("executor", "") or "").strip(),
+                "command": str(item.get("command", "") or "").strip(),
+                "cwd": str(item.get("cwd", ".") or ".").strip(),
+                "status": str(item.get("status", "experimental") or "experimental").strip().lower(),
+            }
+        )
+    return out[:5]
 
 
 def parse_skill_run_request(text: str) -> tuple[bool, str, str]:
