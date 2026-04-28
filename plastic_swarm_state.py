@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import io
 import json
+import math
+import re
 import sqlite3
 import threading
 import time
@@ -42,6 +44,48 @@ class CycleBuffer:
 
     def __len__(self) -> int:
         return len(self._lines)
+
+
+class WorkingMemoryPool:
+    """
+    Pool temporal por ciclo: estado de trabajo compartido entre agentes.
+    No persiste todo; solo alimenta prompts y puede convertirse en experiencia.
+    """
+
+    def __init__(self, max_items: int = 18, max_chars: int = 2400) -> None:
+        self.max_items = max(4, int(max_items))
+        self.max_chars = max(500, int(max_chars))
+        self._items: list[tuple[str, str, float]] = []
+
+    @staticmethod
+    def _compact(text: str, limit: int = 520) -> str:
+        return text.strip().replace("\n", " ")[:limit]
+
+    def add(self, role: str, text: str, *, salience: float = 0.5) -> None:
+        clean = self._compact(text)
+        if not clean:
+            return
+        score = max(0.0, min(1.0, float(salience)))
+        self._items.append((role[:64], clean, score))
+        if len(self._items) > self.max_items:
+            self._items = self._items[-self.max_items :]
+
+    def context(self, *, limit: int = 5) -> str:
+        if not self._items:
+            return ""
+        ranked = sorted(
+            enumerate(self._items),
+            key=lambda it: (it[1][2], it[0]),
+            reverse=True,
+        )
+        lines = []
+        for _idx, (role, text, score) in ranked[: max(1, int(limit))]:
+            lines.append(f"- {role} s={score:.2f}: {text[:360]}")
+        out = "Memoria de trabajo compartida:\n" + "\n".join(lines)
+        return out[: self.max_chars]
+
+    def events(self) -> list[tuple[str, str]]:
+        return [(role, text) for role, text, _score in self._items]
 
 
 class BufferPlasticNet(nn.Module):
@@ -337,6 +381,25 @@ class SharedExperienceReplay:
             return 0.0
         return float(dot / (na * nb))
 
+    @staticmethod
+    def _terms(text: str) -> set[str]:
+        return {
+            t
+            for t in re.findall(r"[a-záéíóúüñ0-9_]{3,}", text.lower())
+            if t not in {"para", "como", "con", "que", "los", "las", "una", "uno", "por"}
+        }
+
+    @classmethod
+    def _lexical_score(cls, query: str, text: str) -> float:
+        q = cls._terms(query)
+        d = cls._terms(text)
+        if not q or not d:
+            return 0.0
+        overlap = len(q & d)
+        if overlap <= 0:
+            return 0.0
+        return float(overlap / math.sqrt(len(q) * len(d)))
+
     def _query_vec(self, query: str) -> list[float]:
         return json.loads(self._embed_json(query))
 
@@ -504,7 +567,13 @@ class SharedExperienceReplay:
             except json.JSONDecodeError:
                 ev = []
             role_bonus = 0.08 if agent_key and str(role).startswith(agent_key) else 0.0
-            score = 0.70 * self._cosine(qv, ev) + 0.22 * float(importance) + role_bonus
+            lexical = self._lexical_score(query, str(text))
+            score = (
+                0.48 * self._cosine(qv, ev)
+                + 0.30 * lexical
+                + 0.18 * float(importance)
+                + role_bonus
+            )
             score += min(0.08, int(row_id) / max(1, self.capacity * 1000))
             ranked.append((score, role, text, reward))
         ranked.sort(reverse=True, key=lambda x: x[0])

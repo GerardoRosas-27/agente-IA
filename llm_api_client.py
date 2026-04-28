@@ -2,7 +2,7 @@
 LLM vía API compatible con OpenAI (LM Studio en la red local).
 
 Solo conexión HTTP a `…/v1/chat/completions`. Valores por defecto si faltan en .env:
-  base:  http://192.168.0.12:1234/v1
+  base:  http://192.168.0.13:1234/v1
   modelo: xiaomi-mimo-vl-miloco-7b (ajusta en .env: LLM_API_BASE_URL, LLM_MODEL)
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ from typing import Any, Callable
 import requests
 
 # LM Studio (misma red que el PC con el servidor; cambia en .env si aplica)
-DEFAULT_LLM_API_BASE_URL = "http://192.168.0.12:1234/v1"
+DEFAULT_LLM_API_BASE_URL = "http://192.168.0.13:1234/v1"
 DEFAULT_LLM_MODEL = "xiaomi-mimo-vl-miloco-7b"
 
 _ENV_LOADED = False
@@ -93,13 +93,15 @@ def parse_assistant_message(r: Any) -> str | None:
         return None
     if isinstance(msg, dict):
         raw = msg.get("content")
-        think = msg.get("thinking")
+        think = msg.get("thinking") or msg.get("reasoning_content")
     else:
         try:
             raw = msg["content"]  # type: ignore[index]
         except (KeyError, TypeError, AttributeError):
             raw = getattr(msg, "content", None)
-        think = getattr(msg, "thinking", None)
+        think = getattr(msg, "thinking", None) or getattr(
+            msg, "reasoning_content", None
+        )
     if raw is not None:
         t = str(raw).strip()
         if t:
@@ -176,6 +178,8 @@ def _post_chat_completions(
             return None
         msg = (choices[0] or {}).get("message") or {}
         content = msg.get("content")
+        if content is None or not str(content).strip():
+            content = msg.get("reasoning_content") or msg.get("thinking")
         if content is None:
             return None
         text = str(content).strip()

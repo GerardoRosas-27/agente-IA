@@ -43,6 +43,37 @@ class TestCallLlmWithStub(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             call_llm(empty, "m", "s", "u", num_predict=20)
 
+    def test_call_llm_uses_in_memory_cache(self) -> None:
+        from multi_agent_orchestrator import call_llm
+
+        calls = {"n": 0}
+
+        def fake_chat(_model, _messages, _options) -> dict:
+            calls["n"] += 1
+            return {"message": {"content": "CACHEADO", "role": "assistant"}}
+
+        first = call_llm(fake_chat, "cache-model-unique", "sys", "user", num_predict=51)
+        second = call_llm(fake_chat, "cache-model-unique", "sys", "user", num_predict=51)
+
+        self.assertEqual(first, "CACHEADO")
+        self.assertEqual(second, "CACHEADO")
+        self.assertEqual(calls["n"], 1)
+
+
+class TestStructuredReviewerParsing(unittest.TestCase):
+    def test_parse_final_verdict_accepts_json(self) -> None:
+        from objective_agent_cycle import parse_final_verdict
+
+        reached, motivo, response, retro = parse_final_verdict(
+            '{"objetivo_alcanzado": true, "motivo": "-", '
+            '"retroalimentacion": "-", "respuesta_final": "listo"}'
+        )
+
+        self.assertTrue(reached)
+        self.assertEqual(motivo, "-")
+        self.assertEqual(response, "listo")
+        self.assertEqual(retro, "-")
+
 
 if __name__ == "__main__":
     unittest.main()

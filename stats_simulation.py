@@ -25,7 +25,7 @@ Uso:
     python stats_simulation.py --llm --llm-every 30
     python stats_simulation.py --max-steps 10000 --fly-neurons 5000
 
-Requisito con --llm: LM Studio (o similar) con API OpenAI, URL en .env (p. ej. LLM_API_BASE_URL, LLM_MODEL). Hay valores por defecto en el código (red local 192.168.0.12:1234).
+Requisito con --llm: LM Studio (o similar) con API OpenAI, URL en .env (p. ej. LLM_API_BASE_URL, LLM_MODEL). Hay valores por defecto en el código (red local 192.168.0.13:1234).
 """
 from __future__ import annotations
 

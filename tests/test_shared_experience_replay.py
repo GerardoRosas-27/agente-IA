@@ -4,6 +4,20 @@ from pathlib import Path
 
 
 class TestSharedExperienceReplay(unittest.TestCase):
+    def test_working_memory_pool_keeps_salient_context(self) -> None:
+        from plastic_swarm_state import WorkingMemoryPool
+
+        pool = WorkingMemoryPool(max_items=3)
+        pool.add("Entiende", "objetivo claro")
+        pool.add("Planifica", "plan importante", salience=0.9)
+        pool.add("Ruido", "dato menor", salience=0.1)
+
+        ctx = pool.context(limit=2)
+
+        self.assertIn("Memoria de trabajo compartida", ctx)
+        self.assertIn("Planifica", ctx)
+        self.assertIn("Entiende", ctx)
+
     def test_records_retrieves_and_consolidates(self) -> None:
         from plastic_swarm_state import SharedExperienceReplay
 

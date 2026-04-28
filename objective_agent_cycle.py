@@ -6,13 +6,14 @@ una red auxiliar al cerrar cada ciclo (buffer se vacía). Ciclos hasta SI o tope
 from __future__ import annotations
 
 import re
+import json
 import threading
 from typing import Callable
 
 import torch
 
 from multi_agent_orchestrator import _ollama, syntax_score, text_hash_embed
-from plastic_swarm_state import BufferPlasticNet, CycleBuffer, SharedExperienceReplay
+from plastic_swarm_state import BufferPlasticNet, CycleBuffer, SharedExperienceReplay, WorkingMemoryPool
 from unified_fly_memory import SharedFlyMemory
 
 
@@ -45,6 +46,25 @@ def parse_final_verdict(text: str) -> tuple[bool, str, str, str]:
     """
     (alcanzado, motivo, respuesta_final, retroalimentacion_para_siguiente_ciclo).
     """
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I).strip()
+        raw = re.sub(r"\s*```$", "", raw).strip()
+    if raw.startswith("{"):
+        try:
+            data = json.loads(raw)
+            reached_raw = data.get("objetivo_alcanzado", data.get("alcanzado", False))
+            reached = bool(reached_raw)
+            if isinstance(reached_raw, str):
+                reached = reached_raw.strip().lower() in {"si", "sí", "yes", "true", "1"}
+            motivo = str(data.get("motivo", "") or "").strip()[:800]
+            resp = str(data.get("respuesta_final", "") or data.get("respuesta", "") or "").strip()
+            retro = str(data.get("retroalimentacion", "") or data.get("retro", "") or "").strip()[:800]
+            if resp:
+                return reached, motivo, resp, retro
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+
     reached = False
     if re.search(
         r"OBJETIVO[_\s]*ALCANZADO\s*:\s*(NO|FALSE|0)\b",
@@ -78,6 +98,29 @@ def parse_final_verdict(text: str) -> tuple[bool, str, str, str]:
     if m2:
         resp = m2.group(1).strip()
     return reached, motivo, resp, retro
+
+
+def _role_budget(base: int, role: str, *, cycle: int, retry: bool = False) -> int:
+    """
+    Presupuesto adaptativo: roles de coordinación usan menos tokens; el revisor
+    puede crecer cuando hay retro previa o ciclos posteriores.
+    """
+    base = max(64, int(base))
+    factors = {
+        "Entiende": 0.85,
+        "Planifica": 1.05,
+        "Discute": 0.70,
+        "Ejecuta": 0.95,
+        "Prueba": 0.75,
+        "Revisor": 1.15,
+    }
+    key = next((k for k in factors if role.startswith(k)), role)
+    factor = factors.get(key, 0.85)
+    if cycle > 0 and key in {"Planifica", "Revisor"}:
+        factor += 0.15
+    if retry:
+        factor += 0.35
+    return max(48, min(900, int(base * factor)))
 
 
 def _mem_step(
@@ -151,6 +194,12 @@ def run_objective_pipeline(
             return ""
         return "\n--- Memoria compartida recuperada ---\n" + ctx + "\n"
 
+    def work_ctx(pool: WorkingMemoryPool, max_chars: int = 900) -> str:
+        ctx = pool.context(limit=5)
+        if not ctx:
+            return ""
+        return "\n--- Pool temporal del ciclo ---\n" + ctx[:max_chars] + "\n"
+
     if weights_ready is not None:
         weights_ready.wait(timeout=180)
 
@@ -179,6 +228,7 @@ def run_objective_pipeline(
     for cyc in range(max(1, int(max_cycles))):
         mem_cur = memory.mem
         cycle_events: list[tuple[str, str]] = []
+        working_pool = WorkingMemoryPool()
         cycles_used = cyc + 1
         logb("Ciclo", f"═══ Ciclo {cyc + 1} / {max_cycles} ═══")
 
@@ -190,9 +240,16 @@ def run_objective_pipeline(
             "Formato:\nOBJETIVO_CLARO: ...\nCRITERIO_1: ...\nCRITERIO_2: ...\n"
         )
         user_e = f"Entrada bruta (solo para ti):\n{raw}"
-        out_e = _ollama(llm_chat, model, sys_e, user_e, num_predict=num_predict + 40)
+        out_e = _ollama(
+            llm_chat,
+            model,
+            sys_e,
+            user_e,
+            num_predict=_role_budget(num_predict + 40, "Entiende", cycle=cyc),
+        )
         logb("Entiende", out_e)
         cycle_events.append(("Entiende", out_e))
+        working_pool.add("Entiende", out_e, salience=0.70)
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_e)
         obj_claro, criterios = parse_understanding(out_e, raw)
         crit_txt = "\n".join(f"- {x}" for x in criterios)
@@ -213,11 +270,19 @@ def run_objective_pipeline(
         user_p = (
             f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n{extra}\n"
             f"{replay_ctx(obj_claro + chr(10) + crit_txt, 'Planifica')}"
+            f"{work_ctx(working_pool)}"
             f"Memoria (parcial): {ctx}\nPLAN:"
         )
-        out_p = _ollama(llm_chat, model, sys_p, user_p, num_predict=num_predict + 60)
+        out_p = _ollama(
+            llm_chat,
+            model,
+            sys_p,
+            user_p,
+            num_predict=_role_budget(num_predict + 60, "Planifica", cycle=cyc, retry=bool(extra)),
+        )
         logb("Planifica", out_p)
         cycle_events.append(("Planifica", out_p))
+        working_pool.add("Planifica", out_p, salience=0.86)
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_p)
 
         log(
@@ -234,11 +299,19 @@ def run_objective_pipeline(
             user_d = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nPLAN:\n{out_p[:3500]}\n\n"
                 f"{replay_ctx(obj_claro + chr(10) + out_p + chr(10) + prev, 'Discute', 900)}"
+                f"{work_ctx(working_pool, 700)}"
                 f"Voces recientes:\n{prev}\n\nMemoria: {_ctx_snip(memory, mem_cur, i)}\nTu aporte:"
             )
-            out_d = _ollama(llm_chat, model, sys_d, user_d, num_predict=num_predict)
+            out_d = _ollama(
+                llm_chat,
+                model,
+                sys_d,
+                user_d,
+                num_predict=_role_budget(num_predict, "Discute", cycle=cyc),
+            )
             logb(f"Discute{i + 1}", out_d)
             cycle_events.append((f"Discute{i + 1}", out_d))
+            working_pool.add(f"Discute{i + 1}", out_d, salience=0.55)
             mem_cur = _mem_step(memory, mem_cur, step_slot(), out_d)
             acc_d.append(out_d)
         discuss_acc = "\n---\n".join(acc_d)
@@ -257,11 +330,19 @@ def run_objective_pipeline(
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nPLAN:\n{out_p[:2500]}\n\n"
                 f"DISCUSIÓN:\n{discuss_acc[:2500]}\n\n"
                 f"{replay_ctx(obj_claro + chr(10) + out_p + chr(10) + discuss_acc, 'Ejecuta', 1000)}"
+                f"{work_ctx(working_pool)}"
                 f"Memoria: {_ctx_snip(memory, mem_cur, j + 2)}\nTu entrega:"
             )
-            out_x = _ollama(llm_chat, model, sys_x, user_x, num_predict=num_predict + 40)
+            out_x = _ollama(
+                llm_chat,
+                model,
+                sys_x,
+                user_x,
+                num_predict=_role_budget(num_predict + 40, "Ejecuta", cycle=cyc),
+            )
             logb(f"Ejecuta{j + 1}", out_x)
             cycle_events.append((f"Ejecuta{j + 1}", out_x))
+            working_pool.add(f"Ejecuta{j + 1}", out_x, salience=0.78)
             mem_cur = _mem_step(memory, mem_cur, step_slot(), out_x)
             acc_x.append(out_x)
         execute_acc = "\n---\n".join(acc_x)
@@ -279,11 +360,19 @@ def run_objective_pipeline(
             user_t = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nEJECUCIÓN:\n{execute_acc[:3500]}\n\n"
                 f"{replay_ctx(obj_claro + chr(10) + execute_acc, 'Prueba', 900)}"
+                f"{work_ctx(working_pool, 800)}"
                 f"Memoria: {_ctx_snip(memory, mem_cur, k + 4)}\nTu informe de prueba:"
             )
-            out_t = _ollama(llm_chat, model, sys_t, user_t, num_predict=num_predict + 30)
+            out_t = _ollama(
+                llm_chat,
+                model,
+                sys_t,
+                user_t,
+                num_predict=_role_budget(num_predict + 30, "Prueba", cycle=cyc),
+            )
             logb(f"Prueba{k + 1}", out_t)
             cycle_events.append((f"Prueba{k + 1}", out_t))
+            working_pool.add(f"Prueba{k + 1}", out_t, salience=0.72)
             mem_cur = _mem_step(memory, mem_cur, step_slot(), out_t)
             acc_t.append(out_t)
         test_acc = "\n---\n".join(acc_t)
@@ -292,27 +381,36 @@ def run_objective_pipeline(
         sys_r = (
             "Eres el REVISOR FINAL. Con OBJETIVO_CLARO, criterios, plan, discusión, "
             "ejecución y pruebas, decide si el objetivo queda satisfecho.\n"
-            "Cabeceras obligatorias:\n"
-            "OBJETIVO_ALCANZADO: SI  (o NO)\n"
-            "MOTIVO: (breve; si SI puede ser \"-\")\n"
-            "RETROALIMENTACION: (si NO, qué debe cambiar el próximo ciclo; si SI \"-\")\n"
-            "RESPUESTA_FINAL: (síntesis útil al usuario)\n"
+            "Devuelve SOLO JSON válido con estas claves:\n"
+            "{\n"
+            "  \"objetivo_alcanzado\": true,\n"
+            "  \"motivo\": \"breve; si todo está bien usa '-'\",\n"
+            "  \"retroalimentacion\": \"si false, qué debe cambiar el próximo ciclo; si true '-'\",\n"
+            "  \"respuesta_final\": \"síntesis útil al usuario\"\n"
+            "}\n"
         )
         user_r = (
             f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n\n"
             f"PLAN:\n{out_p[:1800]}\n\nDISCUSIÓN:\n{discuss_acc[:1800]}\n\n"
             f"EJECUCIÓN:\n{execute_acc[:1800]}\n\nPRUEBAS:\n{test_acc[:1800]}\n"
             f"{replay_ctx(obj_claro + chr(10) + execute_acc + chr(10) + test_acc, 'Revisor', 1000)}"
+            f"{work_ctx(working_pool)}"
         )
         out_r = _ollama(
             llm_chat,
             model,
             sys_r,
             user_r,
-            num_predict=num_predict_final,
+            num_predict=_role_budget(
+                num_predict_final,
+                "Revisor",
+                cycle=cyc,
+                retry=bool(motivo_prev or retro_prev),
+            ),
         )
         logb("Revisor", out_r)
         cycle_events.append(("Revisor", out_r))
+        working_pool.add("Revisor", out_r, salience=0.92)
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_r)
 
         corpus = "\n".join([out_e, out_p, discuss_acc, execute_acc, test_acc, out_r])
