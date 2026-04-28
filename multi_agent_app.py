@@ -26,10 +26,14 @@ from unified_fly_memory import SharedFlyMemory
 
 
 def _role_tag(role: str) -> str:
+    if role.startswith("Internet"):
+        return "i"
     if role.startswith("Discute"):
         return "d"
     if role.startswith("Ejecuta"):
         return "x"
+    if role.startswith("PruebaPython"):
+        return "z"
     if role.startswith("Prueba"):
         return "t"
     return {
@@ -85,7 +89,7 @@ def main() -> None:
         n_slots=max(4, args.mem_slots),
         mem_dim=max(32, args.mem_dim),
         msg_dim=40,
-        n_agents_max=8,
+        n_agents_max=12,
         writer_hidden=128,
         lr=0.002,
         blank_init=True,
@@ -105,12 +109,13 @@ def main() -> None:
     hdr = tk.Label(
         root,
         text=(
-            "Entrada: un OBJETIVO (texto). Flujo: Entiende → Planifica → Discuten → "
-            "Ejecutan → Prueban → Revisor (SI/NO + retro). Cada ciclo: memoria compartida "
+            "Entrada: un OBJETIVO (texto). Flujo: Entiende → Planifica → Internet → "
+            "Discuten → Ejecutan → Prueban → PruebaPython → Revisor (SI/NO + retro). Cada ciclo: memoria compartida "
             "aprende minimizando energía libre; el buffer del ciclo entrena una red auxiliar "
             "y se vacía. Replay compartido recupera experiencia episódica, procedimental "
             "y transactiva sin crecer indefinidamente. Se guardan pesos y optimizadores tras cada ciclo y al cerrar. "
-            "Solo LLM vía API LM Studio (.env: LLM_API_BASE_URL, LLM_MODEL)."
+            "Solo LLM vía API LM Studio (.env: LLM_API_BASE_URL, LLM_MODEL). "
+            "Agentes Internet y PruebaPython activos por defecto, configurables en .env."
         ),
         wraplength=800,
         justify="left",
@@ -133,9 +138,11 @@ def main() -> None:
     for tag, fg in (
         ("e", "#fbbf24"),
         ("p", "#38bdf8"),
+        ("i", "#2dd4bf"),
         ("d", "#a78bfa"),
         ("x", "#34d399"),
         ("t", "#fb7185"),
+        ("z", "#f97316"),
         ("r", "#6ee7b7"),
         ("c", "#94a3b8"),
         ("m", "#9ca3af"),

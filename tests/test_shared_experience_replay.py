@@ -94,6 +94,8 @@ class TestSharedExperienceReplay(unittest.TestCase):
                 n_discuss=1,
                 n_execute=1,
                 n_test=1,
+                internet_agent_enabled=False,
+                python_test_agent_enabled=False,
             )
 
             ctx = replay.retrieval_context("mejorar sistema", agent_key="Revisor")

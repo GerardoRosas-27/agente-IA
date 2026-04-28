@@ -75,5 +75,34 @@ class TestStructuredReviewerParsing(unittest.TestCase):
         self.assertEqual(retro, "-")
 
 
+class TestAuxiliaryAgents(unittest.TestCase):
+    def test_python_probe_parses_json_and_executes_small_script(self) -> None:
+        from objective_agent_cycle import parse_python_probe_request, run_python_probe_script
+
+        needed, reason, script = parse_python_probe_request(
+            '{"necesario": true, "motivo": "validar suma", '
+            '"script": "print(2 + 2)"}'
+        )
+        result = run_python_probe_script(script, timeout=2, max_chars=200)
+
+        self.assertTrue(needed)
+        self.assertEqual(reason, "validar suma")
+        self.assertIn("exit_code=0", result)
+        self.assertIn("4", result)
+
+    def test_python_probe_blocks_unsafe_operations(self) -> None:
+        from objective_agent_cycle import run_python_probe_script
+
+        result = run_python_probe_script("import os\nprint(os.listdir('.'))")
+
+        self.assertIn("operaciones bloqueadas", result)
+
+    def test_python_probe_relevance_can_skip_non_code_context(self) -> None:
+        from objective_agent_cycle import is_python_probe_relevant
+
+        self.assertFalse(is_python_probe_relevant("redactar una carta breve y amable"))
+        self.assertTrue(is_python_probe_relevant("validar una función Python con tests"))
+
+
 if __name__ == "__main__":
     unittest.main()

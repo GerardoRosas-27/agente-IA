@@ -1,20 +1,77 @@
 """
-Enjambre por OBJETIVO: Entiende → Planifica → Discuten → Ejecutan → Prueban
-→ Revisor. Memoria compartida (SharedFlyMemory) + buffer de ciclo que entrena
-una red auxiliar al cerrar cada ciclo (buffer se vacía). Ciclos hasta SI o tope.
+Enjambre por OBJETIVO: Entiende → Planifica → Internet → Discuten → Ejecutan
+→ Prueban → PruebaPython → Revisor. Memoria compartida (SharedFlyMemory)
+y buffer de ciclo que entrena una red auxiliar al cerrar cada ciclo.
 """
 from __future__ import annotations
 
+import html
+import os
 import re
 import json
+import subprocess
+import sys
+import tempfile
 import threading
+import urllib.parse
+import urllib.request
+from pathlib import Path
 from typing import Callable
 
 import torch
 
 from multi_agent_orchestrator import _ollama, syntax_score, text_hash_embed
-from plastic_swarm_state import BufferPlasticNet, CycleBuffer, SharedExperienceReplay, WorkingMemoryPool
+from plastic_swarm_state import (
+    BufferPlasticNet,
+    CycleBuffer,
+    SharedExperienceReplay,
+    WorkingMemoryPool,
+)
 from unified_fly_memory import SharedFlyMemory
+
+_TRUE_ENV = {"1", "true", "yes", "si", "sí", "on", "y"}
+_FALSE_ENV = {"0", "false", "no", "off", "n"}
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in _TRUE_ENV:
+        return True
+    if raw in _FALSE_ENV:
+        return False
+    return default
+
+
+def _env_int(name: str, default: int, *, lo: int, hi: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(lo, min(hi, value))
+
+
+def _env_float(name: str, default: float, *, lo: float, hi: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(lo, min(hi, value))
+
+
+def _strip_json_fence(text: str) -> str:
+    raw = text.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json|python)?\s*", "", raw, flags=re.I).strip()
+        raw = re.sub(r"\s*```$", "", raw).strip()
+    return raw
 
 
 def _ctx_snip(memory: SharedFlyMemory, mem_cur: torch.Tensor, aid: int, n: int = 12) -> str:
@@ -100,6 +157,208 @@ def parse_final_verdict(text: str) -> tuple[bool, str, str, str]:
     return reached, motivo, resp, retro
 
 
+def web_research_agent_turn(
+    query: str,
+    *,
+    max_results: int = 4,
+    timeout: float = 4.0,
+) -> str:
+    """
+    Busca contexto público sin depender de claves API. Si no hay conexión o
+    no hay resultados útiles, devuelve cadena vacía para que el agente pase turno.
+    """
+    q = query.strip().replace("\n", " ")
+    if not q:
+        return ""
+
+    max_results = max(1, min(8, int(max_results)))
+    timeout = max(1.0, min(20.0, float(timeout)))
+    results: list[str] = []
+
+    try:
+        from ddgs import DDGS  # type: ignore
+
+        with DDGS(timeout=timeout) as ddgs:
+            for item in ddgs.text(q[:240], max_results=max_results):
+                title = str(item.get("title") or "Resultado web").strip()
+                body = str(item.get("body") or "").strip()
+                href = str(item.get("href") or "").strip()
+                if not body and not href:
+                    continue
+                line = f"- {title}: {body[:560]}"
+                if href:
+                    line = f"{line} ({href})"
+                results.append(line[:760])
+                if len(results) >= max_results:
+                    break
+    except Exception:
+        results = []
+
+    ddg_url = (
+        "https://api.duckduckgo.com/?"
+        + urllib.parse.urlencode(
+            {
+                "q": q[:240],
+                "format": "json",
+                "no_html": "1",
+                "skip_disambig": "1",
+            }
+        )
+    )
+    try:
+        req = urllib.request.Request(
+            ddg_url,
+            headers={"User-Agent": "PlasticSwarm/1.0 (+learning-cycle)"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read(240_000).decode("utf-8", errors="ignore"))
+        abstract = str(data.get("AbstractText") or "").strip()
+        source = str(data.get("AbstractSource") or "DuckDuckGo").strip()
+        if abstract:
+            results.append(f"- {source}: {abstract[:650]}")
+        for item in data.get("RelatedTopics") or []:
+            if len(results) >= max_results:
+                break
+            if "Topics" in item:
+                topics = item.get("Topics") or []
+            else:
+                topics = [item]
+            for topic in topics:
+                text = str(topic.get("Text") or "").strip()
+                if text:
+                    results.append(f"- DuckDuckGo: {text[:650]}")
+                if len(results) >= max_results:
+                    break
+    except Exception:
+        results = []
+
+    if len(results) < max_results:
+        wiki_url = (
+            "https://en.wikipedia.org/w/api.php?"
+            + urllib.parse.urlencode(
+                {
+                    "action": "opensearch",
+                    "search": q[:120],
+                    "limit": max_results,
+                    "namespace": "0",
+                    "format": "json",
+                }
+            )
+        )
+        try:
+            req = urllib.request.Request(
+                wiki_url,
+                headers={"User-Agent": "PlasticSwarm/1.0 (+learning-cycle)"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read(160_000).decode("utf-8", errors="ignore"))
+            titles = data[1] if len(data) > 1 else []
+            snippets = data[2] if len(data) > 2 else []
+            urls = data[3] if len(data) > 3 else []
+            for title, snippet, url in zip(titles, snippets, urls):
+                if len(results) >= max_results:
+                    break
+                clean = html.unescape(str(snippet or title)).strip()
+                link = str(url or "").strip()
+                if clean:
+                    results.append(f"- Wikipedia: {clean[:560]} ({link})")
+        except Exception:
+            pass
+
+    if not results:
+        return ""
+    return "Aporte web para el ciclo de aprendizaje:\n" + "\n".join(results[:max_results])
+
+
+def parse_python_probe_request(text: str) -> tuple[bool, str, str]:
+    raw = _strip_json_fence(text)
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return False, "El agente no solicitó un script ejecutable.", ""
+    needed_raw = data.get("necesario", data.get("needed", False))
+    needed = bool(needed_raw)
+    if isinstance(needed_raw, str):
+        needed = needed_raw.strip().lower() in _TRUE_ENV
+    reason = str(data.get("motivo", data.get("reason", "")) or "").strip()[:500]
+    script = str(data.get("script", "") or "").strip()
+    return needed, reason, script
+
+
+_PYTHON_PROBE_RELEVANCE_RE = re.compile(
+    r"\b("
+    r"python|codigo|código|script|programa|funcion|función|clase|api|bug|error|"
+    r"test|prueba|pytest|unittest|validar|verificar|calculo|cálculo|formula|fórmula|"
+    r"algoritmo|json|csv|regex|parse|simulacion|simulación|resultado|invariante"
+    r")\b",
+    re.I,
+)
+
+
+def is_python_probe_relevant(*parts: str) -> bool:
+    text = "\n".join(p for p in parts if p).strip()
+    if not text:
+        return False
+    return bool(_PYTHON_PROBE_RELEVANCE_RE.search(text))
+
+
+_PROBE_BLOCKLIST = (
+    r"\bimport\s+(os|subprocess|socket|shutil|pathlib|requests|urllib|http|ftplib|ssl)\b",
+    r"\bfrom\s+(os|subprocess|socket|shutil|pathlib|requests|urllib|http|ftplib|ssl)\b",
+    r"\b(open|eval|exec|compile|input|__import__)\s*\(",
+    r"\b(exit|quit)\s*\(",
+)
+
+
+def run_python_probe_script(
+    script: str,
+    *,
+    timeout: float = 5.0,
+    max_chars: int = 2500,
+) -> str:
+    code = script.strip()
+    max_chars = max(200, min(8000, int(max_chars)))
+    if not code:
+        return "No se ejecutó script: el agente no entregó código."
+    if len(code) > max_chars:
+        return f"No se ejecutó script: excede el límite configurado ({max_chars} caracteres)."
+    for pattern in _PROBE_BLOCKLIST:
+        if re.search(pattern, code):
+            return "No se ejecutó script: contiene operaciones bloqueadas para pruebas pequeñas."
+
+    timeout = max(1.0, min(20.0, float(timeout)))
+    child_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in {"PATH", "SYSTEMROOT", "TEMP", "TMP", "PYTHONPATH"}
+    }
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    with tempfile.TemporaryDirectory(prefix="plastic_probe_") as tmp:
+        script_path = Path(tmp) / "probe.py"
+        script_path.write_text(code, encoding="utf-8")
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(script_path)],
+                cwd=tmp,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=child_env,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return f"Script cancelado por timeout ({timeout:.1f}s)."
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    out = [
+        f"exit_code={proc.returncode}",
+        f"stdout:\n{stdout[:1200] or '(vacío)'}",
+    ]
+    if stderr:
+        out.append(f"stderr:\n{stderr[:1000]}")
+    return "\n".join(out)
+
+
 def _role_budget(base: int, role: str, *, cycle: int, retry: bool = False) -> int:
     """
     Presupuesto adaptativo: roles de coordinación usan menos tokens; el revisor
@@ -165,6 +424,9 @@ def run_objective_pipeline(
     n_discuss: int = 2,
     n_execute: int = 2,
     n_test: int = 1,
+    internet_agent_enabled: bool | None = None,
+    python_test_agent_enabled: bool | None = None,
+    internet_search_fn: Callable[..., str] | None = None,
     on_log: Callable[[str, str], None] | None = None,
     on_cycle_checkpoint: Callable[[], None] | None = None,
 ) -> tuple[str, int, float, bool]:
@@ -172,6 +434,23 @@ def run_objective_pipeline(
     weights_ready: si se pasa, se espera al inicio (carga de pesos en segundo plano).
     """
     log = on_log or (lambda _r, _c: None)
+    internet_enabled = (
+        _env_bool("INTERNET_AGENT_ENABLED", True)
+        if internet_agent_enabled is None
+        else bool(internet_agent_enabled)
+    )
+    python_probe_enabled = (
+        _env_bool("PYTHON_TEST_AGENT_ENABLED", True)
+        if python_test_agent_enabled is None
+        else bool(python_test_agent_enabled)
+    )
+    web_max_results = _env_int("INTERNET_AGENT_MAX_RESULTS", 4, lo=1, hi=8)
+    web_timeout = _env_float("INTERNET_AGENT_TIMEOUT", 4.0, lo=1.0, hi=20.0)
+    probe_timeout = _env_float("PYTHON_TEST_AGENT_TIMEOUT", 5.0, lo=1.0, hi=20.0)
+    probe_max_chars = _env_int("PYTHON_TEST_AGENT_MAX_CHARS", 2500, lo=200, hi=8000)
+    probe_skip_non_code = _env_bool("PYTHON_TEST_AGENT_SKIP_NON_CODE", True)
+    auxiliary_fail_open = _env_bool("AUXILIARY_AGENTS_FAIL_OPEN", True)
+    search_fn = internet_search_fn or web_research_agent_turn
 
     def logb(role: str, content: str) -> None:
         cycle_buffer.add(role, content)
@@ -285,6 +564,25 @@ def run_objective_pipeline(
         working_pool.add("Planifica", out_p, salience=0.86)
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_p)
 
+        internet_acc = ""
+        if internet_enabled:
+            log("Sistema", "── Internet (busca contexto externo si hay conexión) ──")
+            try:
+                internet_acc = search_fn(
+                    f"{obj_claro}\n{crit_txt}\n{out_p[:900]}",
+                    max_results=web_max_results,
+                    timeout=web_timeout,
+                ).strip()
+            except Exception:
+                internet_acc = ""
+            if internet_acc:
+                logb("Internet", internet_acc)
+                cycle_events.append(("Internet", internet_acc))
+                working_pool.add("Internet", internet_acc, salience=0.82)
+                mem_cur = _mem_step(memory, mem_cur, step_slot(), internet_acc)
+            else:
+                log("Internet", "Sin conexión o sin resultados útiles; pasa turno sin aportar.")
+
         log(
             "Sistema",
             f"── Debate entre agentes ({max(1, int(n_discuss))} intervención(es)) ──",
@@ -298,6 +596,7 @@ def run_objective_pipeline(
             )
             user_d = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nPLAN:\n{out_p[:3500]}\n\n"
+                f"APORTE_WEB:\n{internet_acc[:1600] or '(sin aporte)'}\n\n"
                 f"{replay_ctx(obj_claro + chr(10) + out_p + chr(10) + prev, 'Discute', 900)}"
                 f"{work_ctx(working_pool, 700)}"
                 f"Voces recientes:\n{prev}\n\nMemoria: {_ctx_snip(memory, mem_cur, i)}\nTu aporte:"
@@ -328,6 +627,7 @@ def run_objective_pipeline(
             )
             user_x = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nPLAN:\n{out_p[:2500]}\n\n"
+                f"APORTE_WEB:\n{internet_acc[:1600] or '(sin aporte)'}\n\n"
                 f"DISCUSIÓN:\n{discuss_acc[:2500]}\n\n"
                 f"{replay_ctx(obj_claro + chr(10) + out_p + chr(10) + discuss_acc, 'Ejecuta', 1000)}"
                 f"{work_ctx(working_pool)}"
@@ -359,7 +659,8 @@ def run_objective_pipeline(
             )
             user_t = (
                 f"OBJETIVO_CLARO:\n{obj_claro}\n\nEJECUCIÓN:\n{execute_acc[:3500]}\n\n"
-                f"{replay_ctx(obj_claro + chr(10) + execute_acc, 'Prueba', 900)}"
+                f"APORTE_WEB:\n{internet_acc[:1400] or '(sin aporte)'}\n\n"
+                f"{replay_ctx(obj_claro + chr(10) + internet_acc + chr(10) + execute_acc, 'Prueba', 900)}"
                 f"{work_ctx(working_pool, 800)}"
                 f"Memoria: {_ctx_snip(memory, mem_cur, k + 4)}\nTu informe de prueba:"
             )
@@ -377,10 +678,76 @@ def run_objective_pipeline(
             acc_t.append(out_t)
         test_acc = "\n---\n".join(acc_t)
 
+        python_probe_acc = ""
+        if python_probe_enabled:
+            log("Sistema", "── PruebaPython (script pequeño solo si hace falta) ──")
+            if probe_skip_non_code and not is_python_probe_relevant(
+                obj_claro,
+                crit_txt,
+                out_p,
+                execute_acc,
+                test_acc,
+            ):
+                log(
+                    "PruebaPython",
+                    "Objetivo sin contexto de código/verificación ejecutable; pasa turno.",
+                )
+            else:
+                sys_py = (
+                    "Eres PRUEBA_PYTHON. Decide si hace falta ejecutar un script Python pequeño "
+                    "para comprobar cálculos, ejemplos, invariantes o resultados concretos.\n"
+                    "Si no aporta evidencia real, marca necesario=false.\n"
+                    "Si es necesario, usa solo librería estándar segura (math, statistics, json, random), "
+                    "sin red, sin leer/escribir archivos externos, sin input y en menos de 60 líneas.\n"
+                    "Devuelve SOLO JSON válido:\n"
+                    "{\"necesario\": false, \"motivo\": \"...\", \"script\": \"\"}\n"
+                )
+                user_py = (
+                    f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n\n"
+                    f"PLAN:\n{out_p[:1600]}\n\nEJECUCIÓN:\n{execute_acc[:2400]}\n\n"
+                    f"PRUEBAS_LLM:\n{test_acc[:1800]}\n\n"
+                    f"APORTE_WEB:\n{internet_acc[:1200] or '(sin aporte)'}\n\n"
+                    "¿Hace falta comprobar algo con Python? JSON:"
+                )
+                try:
+                    out_py_req = _ollama(
+                        llm_chat,
+                        model,
+                        sys_py,
+                        user_py,
+                        num_predict=_role_budget(num_predict + 40, "Prueba", cycle=cyc),
+                    )
+                    needed, reason, script = parse_python_probe_request(out_py_req)
+                    if needed:
+                        run_result = run_python_probe_script(
+                            script,
+                            timeout=probe_timeout,
+                            max_chars=probe_max_chars,
+                        )
+                        python_probe_acc = (
+                            f"Motivo: {reason or 'verificación solicitada'}\n"
+                            f"Script ejecutado:\n{script[:1200]}\n\nResultado:\n{run_result}"
+                        )
+                        logb("PruebaPython", python_probe_acc)
+                        cycle_events.append(("PruebaPython", python_probe_acc))
+                        working_pool.add("PruebaPython", python_probe_acc, salience=0.84)
+                        mem_cur = _mem_step(memory, mem_cur, step_slot(), python_probe_acc)
+                        test_acc = (
+                            "\n---\n".join([test_acc, python_probe_acc])
+                            if test_acc
+                            else python_probe_acc
+                        )
+                    else:
+                        log("PruebaPython", reason or "No hace falta script; pasa turno sin ejecutar.")
+                except Exception as exc:
+                    if not auxiliary_fail_open:
+                        raise
+                    log("PruebaPython", f"Falló ({exc}); pasa turno sin aportar.")
+
         log("Sistema", "── Revisor (veredicto + una RESPUESTA_FINAL al usuario) ──")
         sys_r = (
             "Eres el REVISOR FINAL. Con OBJETIVO_CLARO, criterios, plan, discusión, "
-            "ejecución y pruebas, decide si el objetivo queda satisfecho.\n"
+            "ejecución, aporte web y pruebas, decide si el objetivo queda satisfecho.\n"
             "Devuelve SOLO JSON válido con estas claves:\n"
             "{\n"
             "  \"objetivo_alcanzado\": true,\n"
@@ -392,8 +759,9 @@ def run_objective_pipeline(
         user_r = (
             f"OBJETIVO_CLARO:\n{obj_claro}\n\nCRITERIOS:\n{crit_txt}\n\n"
             f"PLAN:\n{out_p[:1800]}\n\nDISCUSIÓN:\n{discuss_acc[:1800]}\n\n"
-            f"EJECUCIÓN:\n{execute_acc[:1800]}\n\nPRUEBAS:\n{test_acc[:1800]}\n"
-            f"{replay_ctx(obj_claro + chr(10) + execute_acc + chr(10) + test_acc, 'Revisor', 1000)}"
+            f"APORTE_WEB:\n{internet_acc[:1400] or '(sin aporte)'}\n\n"
+            f"EJECUCIÓN:\n{execute_acc[:1800]}\n\nPRUEBAS:\n{test_acc[:2200]}\n"
+            f"{replay_ctx(obj_claro + chr(10) + internet_acc + chr(10) + execute_acc + chr(10) + test_acc, 'Revisor', 1000)}"
             f"{work_ctx(working_pool)}"
         )
         out_r = _ollama(
@@ -413,7 +781,7 @@ def run_objective_pipeline(
         working_pool.add("Revisor", out_r, salience=0.92)
         mem_cur = _mem_step(memory, mem_cur, step_slot(), out_r)
 
-        corpus = "\n".join([out_e, out_p, discuss_acc, execute_acc, test_acc, out_r])
+        corpus = "\n".join([out_e, out_p, internet_acc, discuss_acc, execute_acc, test_acc, out_r])
         reached, motivo_prev, final_txt, retro_prev = parse_final_verdict(out_r)
         if experience_replay is not None:
             try:
