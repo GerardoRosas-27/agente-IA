@@ -31,6 +31,7 @@ from plastic_swarm_state import (
     WorkingMemoryPool,
 )
 from skill_manager import SkillManager, parse_skill_learning_response
+from specialized_regions import SpecializedRegionStore
 from terminal_tool import parse_terminal_command_request, run_terminal_command
 from task_runtime import TaskRuntime
 from tool_library import ToolLibrary, parse_tool_memory_request
@@ -460,6 +461,7 @@ def run_objective_pipeline(
     skill_manager: SkillManager | None = None,
     persistent_memory: PersistentMemoryStore | None = None,
     tool_preference_store: ToolPreferenceStore | None = None,
+    specialized_region_store: SpecializedRegionStore | None = None,
     task_runtime: TaskRuntime | None = None,
     tool_registry: ToolRegistry | None = None,
     autonomous_mode: bool = False,
@@ -509,6 +511,7 @@ def run_objective_pipeline(
     persistent_memory_enabled = _env_bool("PERSISTENT_MEMORY_ENABLED", True)
     tool_preference_enabled = _env_bool("TOOL_PREFERENCE_NET_ENABLED", True)
     tool_preference_rank_limit = _env_int("TOOL_PREFERENCE_RANK_LIMIT", 8, lo=1, hi=20)
+    specialized_regions_enabled = _env_bool("SPECIALIZED_REGIONS_ENABLED", True)
     auxiliary_fail_open = _env_bool("AUXILIARY_AGENTS_FAIL_OPEN", True)
     search_fn = internet_search_fn or web_research_agent_turn
     run_terminal_fn = terminal_run_fn or run_terminal_command
@@ -516,6 +519,13 @@ def run_objective_pipeline(
     active_skill_manager = (
         skill_manager if skill_manager is not None else (SkillManager() if skill_manager_enabled else None)
     )
+    if active_skill_manager is not None:
+        try:
+            repaired = active_skill_manager.repair_manifests()
+            if repaired:
+                log("Skills", f"Manifests reparados: {len(repaired)}")
+        except Exception as exc:
+            log("Skills", f"No se pudieron reparar manifests: {exc}")
     memory_store = (
         persistent_memory
         if persistent_memory is not None
@@ -525,6 +535,11 @@ def run_objective_pipeline(
         tool_preference_store
         if tool_preference_store is not None
         else (ToolPreferenceStore() if tool_preference_enabled else None)
+    )
+    specialized_regions = (
+        specialized_region_store
+        if specialized_region_store is not None
+        else (SpecializedRegionStore() if specialized_regions_enabled else None)
     )
     runtime = task_runtime or TaskRuntime()
     project_root = Path(__file__).resolve().parent
@@ -613,6 +628,16 @@ def run_objective_pipeline(
                 log("ToolPreferenceNet", tool_preference_ctx)
         except Exception as exc:
             log("ToolPreferenceNet", f"No se pudo rankear herramientas: {exc}")
+    specialized_regions_ctx = ""
+    if specialized_regions is not None:
+        try:
+            specialized_regions_ctx = specialized_regions.context(
+                raw,
+                "\n".join([hot_memory_ctx, session_memory_ctx, tool_preference_ctx]),
+            )
+            log("RegionesEspecializadas", specialized_regions_ctx[:2400])
+        except Exception as exc:
+            log("RegionesEspecializadas", f"No se pudo consultar regiones: {exc}")
     hot_memory_ctx = ""
     session_memory_ctx = ""
     if memory_store is not None:
@@ -657,6 +682,7 @@ def run_objective_pipeline(
             f"MEMORIA_PERSISTENTE:\n{hot_memory_ctx or '(vacía)'}\n\n"
             f"SESIONES_RELEVANTES:\n{session_memory_ctx or '(sin coincidencias)'}\n\n"
             f"PREFERENCIA_NEURONAL_HERRAMIENTAS:\n{tool_preference_ctx or '(sin datos)'}\n\n"
+            f"REGIONES_ESPECIALIZADAS:\n{specialized_regions_ctx or '(sin datos)'}\n\n"
             f"Entrada bruta (solo para ti):\n{raw}"
         )
         out_e = _ollama(
@@ -813,6 +839,7 @@ def run_objective_pipeline(
             f"MEMORIA_PERSISTENTE:\n{hot_memory_ctx[:1400] or '(vacía)'}\n\n"
             f"SESIONES_RELEVANTES:\n{session_memory_ctx[:1000] or '(sin coincidencias)'}\n\n"
             f"PREFERENCIA_NEURONAL_HERRAMIENTAS:\n{tool_preference_ctx[:1200] or '(sin datos)'}\n\n"
+            f"REGIONES_ESPECIALIZADAS:\n{specialized_regions_ctx[:1400] or '(sin datos)'}\n\n"
             f"HERRAMIENTAS_REUTILIZABLES:\n{tool_ctx or '(sin coincidencias)'}\n\n"
             f"{replay_ctx(obj_claro + chr(10) + crit_txt, 'Planifica')}"
             f"{work_ctx(working_pool)}"
@@ -1330,6 +1357,7 @@ def run_objective_pipeline(
                 if not auxiliary_fail_open:
                     raise
                 log("GestorHerramientas", f"No se pudo consolidar herramienta: {exc}")
+        created_skill_this_cycle = False
         if reached and active_skill_manager is not None:
             log("Sistema", "── AprendizSkills (crea/actualiza playbooks reutilizables) ──")
             sys_skill_learn = (
@@ -1362,6 +1390,7 @@ def run_objective_pipeline(
                 for item in learned:
                     path = active_skill_manager.upsert_learned_skill(**item)
                     saved.append(str(path.name))
+                created_skill_this_cycle = bool(saved)
                 msg = (
                     "skills actualizados: " + ", ".join(saved)
                     if saved
@@ -1387,12 +1416,18 @@ def run_objective_pipeline(
                 )
             except Exception as exc:
                 log("Replay", f"No se pudo registrar replay compartido: {exc}")
+        tool_calls_for_learning: list[dict] = []
+        if tool_pref is not None or specialized_regions is not None:
+            try:
+                tool_calls_for_learning = runtime.tool_calls_for_task(task_id, limit=200)
+            except Exception as exc:
+                log("Runtime", f"No se pudieron leer tool calls para aprendizaje: {exc}")
+                tool_calls_for_learning = []
         if tool_pref is not None:
             try:
-                calls = runtime.tool_calls_for_task(task_id, limit=200)
                 tp_loss, tp_stats = tool_pref.train_from_calls(
                     obj_claro,
-                    calls,
+                    tool_calls_for_learning,
                     reached=reached,
                     steps=10,
                 )
@@ -1402,12 +1437,33 @@ def run_objective_pipeline(
                     f"prediccion={tp_stats['prediction_error']:.4f} "
                     f"complejidad={tp_stats['complexity']:.6f} "
                     f"entropia={tp_stats['entropy']:.6f} "
-                    f"loss={tp_loss:.4f} eventos={len(calls)}",
+                    f"loss={tp_loss:.4f} eventos={len(tool_calls_for_learning)}",
                 )
             except Exception as exc:
                 if not auxiliary_fail_open:
                     raise
                 log("ToolPreferenceNet", f"No se pudo entrenar preferencia de herramientas: {exc}")
+        if specialized_regions is not None:
+            try:
+                sr_stats = specialized_regions.train_from_cycle(
+                    objective=obj_claro,
+                    context="\n".join([out_p, discuss_acc, execute_acc, test_acc, final_txt])[:2400],
+                    reached=reached,
+                    cycles_used=cycles_used,
+                    tool_calls=tool_calls_for_learning,
+                    created_skill=created_skill_this_cycle,
+                    used_skill=bool(skill_run_acc),
+                    steps=8,
+                )
+                summary = "; ".join(
+                    f"{name}:FE={stats['free_energy']:.4f}"
+                    for name, stats in sr_stats.items()
+                )
+                log("RegionesEspecializadas", summary)
+            except Exception as exc:
+                if not auxiliary_fail_open:
+                    raise
+                log("RegionesEspecializadas", f"No se pudieron entrenar regiones: {exc}")
         last_loss, free_energy_stats = _memory_learn(memory, mem_cur, corpus, final_txt)
 
         lines = cycle_buffer.lines()

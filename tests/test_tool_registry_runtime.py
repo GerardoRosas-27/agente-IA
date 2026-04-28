@@ -224,6 +224,31 @@ class TestTaskRuntimeAndToolRegistry(unittest.TestCase):
         self.assertEqual(specs[0]["tool_name"], "skill.github")
         self.assertIn("AgenteSkill:github", ctx)
 
+    def test_skill_manager_repairs_incomplete_manifest_and_caches(self) -> None:
+        import json
+
+        from skill_manager import SkillManager
+
+        with tempfile.TemporaryDirectory() as tmp:
+            skill_dir = Path(tmp) / "skills" / "broken"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "manifest.json").write_text(
+                json.dumps({"risk": "invalid-risk"}),
+                encoding="utf-8",
+            )
+            manager = SkillManager(Path(tmp) / "skills")
+            repaired = manager.repair_manifests()
+            first = manager.load_skills()
+            second = manager.load_skills()
+            data = json.loads((skill_dir / "manifest.json").read_text(encoding="utf-8"))
+            readme_exists = (skill_dir / "README.md").exists()
+
+        self.assertTrue(repaired)
+        self.assertEqual(first[0].name, "broken")
+        self.assertEqual(second[0].risk, "moderate")
+        self.assertEqual(data["status"], "experimental")
+        self.assertTrue(readme_exists)
+
     def test_tool_library_lists_and_deletes_entries(self) -> None:
         from tool_library import ToolLibrary, ToolMemory
 

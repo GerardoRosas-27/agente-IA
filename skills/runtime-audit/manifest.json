@@ -19,5 +19,8 @@
     "ui:read"
   ],
   "entrypoint": "multi_agent_app.open_audit_window",
-  "instructions": "Usa el boton Auditoria de la interfaz para inspeccionar objetivos recientes y llamadas de herramientas registradas por TaskRuntime."
+  "instructions": "Usa el boton Auditoria de la interfaz para inspeccionar objetivos recientes y llamadas de herramientas registradas por TaskRuntime.",
+  "executor": "",
+  "command": "",
+  "cwd": "."
 }
