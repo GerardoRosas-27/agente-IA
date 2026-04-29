@@ -612,6 +612,178 @@ def main() -> None:
         tools_box.bind("<<ListboxSelect>>", on_select)
         refresh_tools()
 
+    def create_new_tool() -> None:
+        if busy["v"]:
+            messagebox.showinfo(
+                "Crear herramienta",
+                "El ciclo principal ya está trabajando. Espera a que termine.",
+                parent=root,
+            )
+            return
+        objective = simpledialog.askstring(
+            "Crear nueva herramienta",
+            "Describe qué herramienta quieres crear y probar:",
+            parent=root,
+        )
+        if not objective or not objective.strip():
+            return
+
+        try:
+            run_tests = str(os.getenv("SELF_IMPROVEMENT_RUN_TESTS", "1")).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "si",
+                "sí",
+                "on",
+            }
+            test_timeout = float(os.getenv("SELF_IMPROVEMENT_TEST_TIMEOUT", "120") or "120")
+        except ValueError:
+            run_tests, test_timeout = True, 120.0
+
+        busy["v"] = True
+        emit(
+            "Sistema",
+            "Creando nueva herramienta con el ciclo principal; se instalará como skill si las pruebas pasan.",
+        )
+        creator = ToolCreator(
+            skill_manager=skill_manager,
+            tool_library=tool_library,
+            on_log=emit,
+        )
+        cycle_buf = CycleBuffer()
+
+        def pipeline_runner(cycle_objective: str) -> tuple[str, int, float, bool]:
+            forced_env = {
+                "INTERNET_AGENT_ENABLED": "1",
+                "PYTHON_TEST_AGENT_ENABLED": "1",
+                "PYTHON_TEST_AGENT_SKIP_NON_CODE": "0",
+                "NODE_TEST_AGENT_ENABLED": "1",
+                "NODE_TEST_AGENT_SKIP_NON_CODE": "0",
+            }
+            previous_env = {key: os.environ.get(key) for key in forced_env}
+            os.environ.update(forced_env)
+            emit(
+                "CrearHerramienta",
+                "Agentes auxiliares forzados para este flujo: Internet=ON, PruebaPython=ON, PruebaNode=ON, skip_non_code=OFF.",
+            )
+            try:
+                return run_objective_pipeline(
+                    cycle_objective,
+                    shared_mem,
+                    llm_model_id,
+                    llm_chat_fn,
+                    cycle_buffer=cycle_buf,
+                    plastic_aux=plastic_aux,
+                    experience_replay=experience_replay,
+                    tool_library=tool_library,
+                    skill_manager=skill_manager,
+                    persistent_memory=persistent_memory,
+                    cognitive_system=cognitive_system,
+                    task_runtime=task_runtime,
+                    internet_agent_enabled=True,
+                    python_test_agent_enabled=True,
+                    node_test_agent_enabled=True,
+                    terminal_agent_enabled=False,
+                    autonomous_mode=bool(autonomous_var.get()),
+                    approval_callback=approve_tool_call,
+                    weights_ready=weights_ready,
+                    num_predict=max(args.num_predict, 260),
+                    num_predict_final=max(args.num_predict_final, 1400),
+                    max_cycles=max(1, min(5, args.max_cycles)),
+                    n_discuss=max(1, min(3, args.discuss)),
+                    n_execute=max(1, min(3, args.execute)),
+                    n_test=max(1, min(2, args.test)),
+                    on_log=emit,
+                    on_cycle_checkpoint=lambda: store.save(shared_mem, plastic_aux),
+                )
+            finally:
+                for key, value in previous_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        def worker() -> None:
+            try:
+                builder = ToolBuildRuntime(
+                    creator=creator,
+                    max_repair_attempts=3,
+                )
+
+                def repair_with_llm(prompt: str) -> str:
+                    resp = llm_chat_fn(
+                        llm_model_id,
+                        [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Eres un reparador de herramientas. Devuelve solo JSON valido "
+                                    "con codigo y pruebas corregidas."
+                                ),
+                            },
+                            {"role": "user", "content": prompt},
+                        ],
+                        {"num_predict": 1600, "temperature": 0.2},
+                    )
+                    return parse_assistant_message(resp) or ""
+
+                final_txt, cycles, _loss_v, reached = pipeline_runner(
+                    tool_creation_objective(objective.strip())
+                )
+                result = builder.build(
+                    user_objective=objective.strip(),
+                    initial_text=final_txt,
+                    cycles=cycles,
+                    reached=reached,
+                    run_tests=run_tests,
+                    timeout=test_timeout,
+                    repair_callback=repair_with_llm,
+                )
+            except Exception as exc:
+                root.after(0, lambda exc=exc: on_fail_create(exc))
+                return
+
+            def done() -> None:
+                status = "validada" if result.test_ok else "instalada como experimental"
+                append(
+                    "g",
+                    "[CrearHerramienta]",
+                    (
+                        f"Herramienta {status}: {result.name}\n"
+                        f"Ruta: {result.skill_dir}\n"
+                        f"Ciclos usados: {result.cycles}\n\n"
+                        f"Intentos de build: {result.attempts}\n"
+                        f"Build-log: {result.build_log_path or '-'}\n\n"
+                        f"Pruebas:\n{result.test_output}"
+                    ),
+                )
+                try:
+                    store.save(shared_mem, plastic_aux)
+                except Exception as exc:
+                    append("s", "[Persistencia]", str(exc))
+                busy["v"] = False
+                if result.test_ok:
+                    messagebox.showinfo(
+                        "Crear herramienta",
+                        f"Herramienta instalada y probada: {result.name}",
+                        parent=root,
+                    )
+                else:
+                    messagebox.showwarning(
+                        "Crear herramienta",
+                        f"La herramienta se instaló como experimental porque fallaron las pruebas: {result.name}",
+                        parent=root,
+                    )
+
+            root.after(0, done)
+
+        def on_fail_create(exc: Exception) -> None:
+            busy["v"] = False
+            messagebox.showerror("Crear herramienta", str(exc), parent=root)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def open_config_window() -> None:
         win = tk.Toplevel(root)
         win.title("Configuración · .env")
@@ -718,183 +890,36 @@ def main() -> None:
                 parent=win,
             )
 
-        def create_new_tool() -> None:
-            if busy["v"]:
-                messagebox.showinfo(
-                    "Crear herramienta",
-                    "El ciclo principal ya está trabajando. Espera a que termine.",
-                    parent=win,
-                )
-                return
-            objective = simpledialog.askstring(
-                "Crear nueva herramienta",
-                "Describe qué herramienta quieres crear y probar:",
-                parent=win,
-            )
-            if not objective or not objective.strip():
-                return
-            try:
-                save_config(collect_values())
-            except Exception as exc:
-                messagebox.showerror("Configuración", str(exc), parent=win)
-                return
-
-            try:
-                run_tests = str(os.getenv("SELF_IMPROVEMENT_RUN_TESTS", "1")).strip().lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                    "si",
-                    "sí",
-                    "on",
-                }
-                test_timeout = float(os.getenv("SELF_IMPROVEMENT_TEST_TIMEOUT", "120") or "120")
-            except ValueError:
-                run_tests, test_timeout = True, 120.0
-
-            busy["v"] = True
-            emit(
-                "Sistema",
-                "Creando nueva herramienta con el ciclo principal; se instalará como skill si las pruebas pasan.",
-            )
-            creator = ToolCreator(
-                skill_manager=skill_manager,
-                tool_library=tool_library,
-                on_log=emit,
-            )
-            cycle_buf = CycleBuffer()
-
-            def pipeline_runner(cycle_objective: str) -> tuple[str, int, float, bool]:
-                forced_env = {
-                    "INTERNET_AGENT_ENABLED": "1",
-                    "PYTHON_TEST_AGENT_ENABLED": "1",
-                    "PYTHON_TEST_AGENT_SKIP_NON_CODE": "0",
-                    "NODE_TEST_AGENT_ENABLED": "1",
-                    "NODE_TEST_AGENT_SKIP_NON_CODE": "0",
-                }
-                previous_env = {key: os.environ.get(key) for key in forced_env}
-                os.environ.update(forced_env)
-                emit(
-                    "CrearHerramienta",
-                    "Agentes auxiliares forzados para este flujo: Internet=ON, PruebaPython=ON, PruebaNode=ON, skip_non_code=OFF.",
-                )
-                try:
-                    return run_objective_pipeline(
-                        cycle_objective,
-                        shared_mem,
-                        llm_model_id,
-                        llm_chat_fn,
-                        cycle_buffer=cycle_buf,
-                        plastic_aux=plastic_aux,
-                        experience_replay=experience_replay,
-                        tool_library=tool_library,
-                        skill_manager=skill_manager,
-                        persistent_memory=persistent_memory,
-                        cognitive_system=cognitive_system,
-                        task_runtime=task_runtime,
-                        internet_agent_enabled=True,
-                        python_test_agent_enabled=True,
-                        node_test_agent_enabled=True,
-                        terminal_agent_enabled=False,
-                        autonomous_mode=bool(autonomous_var.get()),
-                        approval_callback=approve_tool_call,
-                        weights_ready=weights_ready,
-                        num_predict=max(args.num_predict, 260),
-                        num_predict_final=max(args.num_predict_final, 1400),
-                        max_cycles=max(1, min(5, args.max_cycles)),
-                        n_discuss=max(1, min(3, args.discuss)),
-                        n_execute=max(1, min(3, args.execute)),
-                        n_test=max(1, min(2, args.test)),
-                        on_log=emit,
-                        on_cycle_checkpoint=lambda: store.save(shared_mem, plastic_aux),
-                    )
-                finally:
-                    for key, value in previous_env.items():
-                        if value is None:
-                            os.environ.pop(key, None)
-                        else:
-                            os.environ[key] = value
-
-            def worker() -> None:
-                try:
-                    builder = ToolBuildRuntime(
-                        creator=creator,
-                        max_repair_attempts=3,
-                    )
-
-                    def repair_with_llm(prompt: str) -> str:
-                        resp = llm_chat_fn(
-                            llm_model_id,
-                            [
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "Eres un reparador de herramientas. Devuelve solo JSON valido "
-                                        "con codigo y pruebas corregidas."
-                                    ),
-                                },
-                                {"role": "user", "content": prompt},
-                            ],
-                            {"num_predict": 1600, "temperature": 0.2},
-                        )
-                        return parse_assistant_message(resp) or ""
-
-                    final_txt, cycles, _loss_v, reached = pipeline_runner(
-                        tool_creation_objective(objective.strip())
-                    )
-                    result = builder.build(
-                        user_objective=objective.strip(),
-                        initial_text=final_txt,
-                        cycles=cycles,
-                        reached=reached,
-                        run_tests=run_tests,
-                        timeout=test_timeout,
-                        repair_callback=repair_with_llm,
-                    )
-                except Exception as exc:
-                    root.after(0, lambda exc=exc: on_fail(exc))
-                    return
-
-                def done() -> None:
-                    status = "validada" if result.test_ok else "instalada como experimental"
-                    append(
-                        "g",
-                        "[CrearHerramienta]",
-                        (
-                            f"Herramienta {status}: {result.name}\n"
-                            f"Ruta: {result.skill_dir}\n"
-                            f"Ciclos usados: {result.cycles}\n\n"
-                            f"Intentos de build: {result.attempts}\n"
-                            f"Build-log: {result.build_log_path or '-'}\n\n"
-                            f"Pruebas:\n{result.test_output}"
-                        ),
-                    )
-                    try:
-                        store.save(shared_mem, plastic_aux)
-                    except Exception as exc:
-                        append("s", "[Persistencia]", str(exc))
-                    busy["v"] = False
-                    if result.test_ok:
-                        messagebox.showinfo(
-                            "Crear herramienta",
-                            f"Herramienta instalada y probada: {result.name}",
-                            parent=win,
-                        )
-                    else:
-                        messagebox.showwarning(
-                            "Crear herramienta",
-                            f"La herramienta se instaló como experimental porque fallaron las pruebas: {result.name}",
-                            parent=win,
-                        )
-
-                root.after(0, done)
-
-            def on_fail(exc: Exception) -> None:
-                busy["v"] = False
-                messagebox.showerror("Crear herramienta", str(exc), parent=win)
-
-            threading.Thread(target=worker, daemon=True).start()
-
+        tk.Button(
+            header,
+            text="Ver chat-log",
+            command=show_chat_log_path,
+            bg="#374151",
+            fg="white",
+            activebackground="#4b5563",
+            relief="flat",
+            padx=10,
+        ).pack(side="right", padx=(0, 6))
+        tk.Button(
+            header,
+            text="Memoria",
+            command=open_memory_window,
+            bg="#374151",
+            fg="white",
+            activebackground="#4b5563",
+            relief="flat",
+            padx=10,
+        ).pack(side="right", padx=(0, 6))
+        tk.Button(
+            header,
+            text="Auditoría",
+            command=open_audit_window,
+            bg="#374151",
+            fg="white",
+            activebackground="#4b5563",
+            relief="flat",
+            padx=10,
+        ).pack(side="right", padx=(0, 6))
         tk.Button(
             header,
             text="Guardar .env",
@@ -905,16 +930,6 @@ def main() -> None:
             relief="flat",
             padx=12,
         ).pack(side="right")
-        tk.Button(
-            header,
-            text="Crear nuevas herramientas",
-            command=create_new_tool,
-            bg="#0f766e",
-            fg="white",
-            activebackground="#0d9488",
-            relief="flat",
-            padx=12,
-        ).pack(side="right", padx=(0, 8))
 
     def on_run(_ev=None) -> None:
         if busy["v"]:
@@ -1001,13 +1016,6 @@ def main() -> None:
 
     action_bar = tk.Frame(root, bg="#1a1d24")
     action_bar.pack(fill="x", padx=10, pady=(0, 8))
-    tk.Label(
-        action_bar,
-        text="Acciones del sistema:",
-        bg="#1a1d24",
-        fg="#9ca3af",
-        font=("Segoe UI", 9),
-    ).pack(side="left", padx=(0, 8))
     tk.Button(
         action_bar,
         text="Ejecutar",
@@ -1020,27 +1028,7 @@ def main() -> None:
     ).pack(side="right")
     tk.Button(
         action_bar,
-        text="Auditoría",
-        command=open_audit_window,
-        bg="#374151",
-        fg="white",
-        activebackground="#4b5563",
-        relief="flat",
-        padx=12,
-    ).pack(side="right", padx=(0, 8))
-    tk.Button(
-        action_bar,
-        text="Memoria",
-        command=open_memory_window,
-        bg="#374151",
-        fg="white",
-        activebackground="#4b5563",
-        relief="flat",
-        padx=12,
-    ).pack(side="right", padx=(0, 8))
-    tk.Button(
-        action_bar,
-        text="Configurar sistema",
+        text="Configurar",
         command=open_config_window,
         bg="#374151",
         fg="white",
@@ -1050,11 +1038,11 @@ def main() -> None:
     ).pack(side="right", padx=(0, 8))
     tk.Button(
         action_bar,
-        text="Ver chat-log",
-        command=show_chat_log_path,
-        bg="#374151",
+        text="Crear herramienta",
+        command=create_new_tool,
+        bg="#0f766e",
         fg="white",
-        activebackground="#4b5563",
+        activebackground="#0d9488",
         relief="flat",
         padx=12,
     ).pack(side="right", padx=(0, 8))

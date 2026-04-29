@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -39,6 +40,11 @@ class GeneratedToolSpec:
     test_code: str
     instructions: str
     risk: str = "moderate"
+    callable_name: str = "run"
+    input_schema: dict[str, str] | None = None
+    output_schema: dict[str, str] | None = None
+    permissions: list[str] | None = None
+    requirements: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -67,8 +73,10 @@ def tool_creation_objective(user_objective: str) -> str:
         "No incluyas secretos reales; usa parametros para tokens, URLs y credenciales. "
         "Evita acciones destructivas y no uses subprocess, eval, exec ni input interactivo. "
         "La respuesta final debe ser SOLO JSON valido, sin markdown, con estas claves: "
-        "name, description, triggers, code, test_code, instructions, risk. "
-        "El campo code debe definir funciones reutilizables sin ejecutar trabajo al importarse. "
+        "name, description, triggers, code, test_code, instructions, risk, callable, "
+        "input_schema, output_schema, permissions, requirements. "
+        "El campo code debe definir funciones reutilizables sin ejecutar trabajo al importarse "
+        "y DEBE exponer una funcion run(**kwargs) o run con argumentos nombrados. "
         "El campo test_code debe usar unittest y validar casos reales sin depender de servicios externos vivos; "
         "usa mocks cuando la herramienta sea de red. "
         "Si el objetivo requiere WhatsApp, crea una herramienta que soporte enlaces wa.me/deep links "
@@ -109,6 +117,17 @@ def _as_list(value: object) -> list[str]:
     return []
 
 
+def _as_schema(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, val in value.items():
+        name = str(key).strip()
+        if name:
+            out[name] = str(val or "str").strip()[:80] or "str"
+    return out
+
+
 def parse_generated_tool_spec(text: str) -> GeneratedToolSpec:
     data = _extract_json_object(text)
     if not data.get("code") and not data.get("codigo"):
@@ -130,6 +149,11 @@ def parse_generated_tool_spec(text: str) -> GeneratedToolSpec:
         test_code=test_code,
         instructions=str(data.get("instructions", data.get("instrucciones", "")) or "").strip(),
         risk=str(data.get("risk", "moderate") or "moderate").strip().lower(),
+        callable_name=str(data.get("callable", data.get("callable_name", "run")) or "run").strip(),
+        input_schema=_as_schema(data.get("input_schema", data.get("schema", {}))),
+        output_schema=_as_schema(data.get("output_schema", {})),
+        permissions=_as_list(data.get("permissions", data.get("permisos", []))),
+        requirements=_as_list(data.get("requirements", data.get("dependencias", []))),
     )
 
 
@@ -160,6 +184,11 @@ def parse_markdown_tool_spec(text: str) -> GeneratedToolSpec:
         test_code=test_code,
         instructions=instructions,
         risk=risk,
+        callable_name="run",
+        input_schema={},
+        output_schema={},
+        permissions=[],
+        requirements=[],
     )
 
 
@@ -219,9 +248,13 @@ def contact_payload(phone, message="", default_country_code=""):
         "wa_me_url": build_wa_me_url(phone, message, default_country_code),
         "deep_link": build_whatsapp_deep_link(phone, message, default_country_code),
     }
+
+
+def run(phone, message="", default_country_code=""):
+    return contact_payload(phone, message, default_country_code)
 '''
     test_code = r'''import unittest
-from tool import build_wa_me_url, build_whatsapp_deep_link, contact_payload, normalize_phone
+from tool import build_wa_me_url, build_whatsapp_deep_link, contact_payload, normalize_phone, run
 
 
 class TestWhatsAppLinkTool(unittest.TestCase):
@@ -246,6 +279,10 @@ class TestWhatsAppLinkTool(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_phone("")
 
+    def test_run_contract(self):
+        payload = run("5512345678", "hola", "52")
+        self.assertEqual(payload["phone"], "525512345678")
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -261,6 +298,11 @@ if __name__ == "__main__":
             "La herramienta no abre WhatsApp por si sola; devuelve enlaces listos para que la UI o el usuario los abra."
         ),
         risk="low",
+        callable_name="run",
+        input_schema={"phone": "str", "message": "str", "default_country_code": "str"},
+        output_schema={"phone": "str", "wa_me_url": "str", "deep_link": "str"},
+        permissions=[],
+        requirements=[],
     )
 
 
@@ -291,6 +333,18 @@ def _validate_python_code(code: str, *, label: str) -> None:
     for pattern in _DANGEROUS_CODE_PATTERNS:
         if re.search(pattern, code):
             raise ValueError(f"{label} contiene una operacion bloqueada por seguridad.")
+
+
+def _validate_requirements(requirements: list[str] | None) -> list[str]:
+    clean: list[str] = []
+    for item in requirements or []:
+        req = str(item or "").strip()
+        if not req:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+(?:[<>=!~]=?[A-Za-z0-9_.*+-]+)?", req):
+            raise ValueError(f"requirement inseguro o invalido: {req}")
+        clean.append(req)
+    return clean[:24]
 
 
 def _default_test_code() -> str:
@@ -334,10 +388,15 @@ class ToolCreator:
         _validate_python_code(spec.code, label="tool.py")
         test_code = spec.test_code or _default_test_code()
         _validate_python_code(test_code, label="test_tool.py")
+        requirements = _validate_requirements(spec.requirements)
+        callable_name = (spec.callable_name or "run").strip()
+        if not callable_name.replace("_", "").isalnum() or callable_name.startswith("_"):
+            raise ValueError("callable invalido para herramienta generada.")
 
         slug = self.skill_manager.slugify(spec.name)
         skill_dir = self.skill_manager.skills_dir / slug
         skill_dir.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(skill_dir / "__pycache__", ignore_errors=True)
         tool_path = skill_dir / "tool.py"
         test_path = skill_dir / "test_tool.py"
         manifest_path = skill_dir / "manifest.json"
@@ -346,6 +405,10 @@ class ToolCreator:
         tool_path.write_text(spec.code.rstrip() + "\n", encoding="utf-8")
         test_path.write_text(test_code.rstrip() + "\n", encoding="utf-8")
         (skill_dir / "__init__.py").write_text("", encoding="utf-8")
+        (skill_dir / "requirements.txt").write_text(
+            "\n".join(requirements) + ("\n" if requirements else ""),
+            encoding="utf-8",
+        )
 
         manifest = {
             "name": slug,
@@ -356,9 +419,13 @@ class ToolCreator:
             "agent_enabled": True,
             "agent_role": f"AgenteSkill:{slug}",
             "triggers": spec.triggers[:24],
-            "permissions": [],
+            "permissions": list(spec.permissions or [])[:24],
             "entrypoint": str(tool_path.relative_to(self.project_root)).replace("\\", "/"),
-            "executor": "",
+            "executor": "python_module",
+            "callable": callable_name,
+            "input_schema": spec.input_schema or {},
+            "output_schema": spec.output_schema or {},
+            "requirements": requirements,
             "command": "",
             "cwd": ".",
             "instructions": spec.instructions or "Importa tool.py desde este skill y reutiliza sus funciones publicas.",
@@ -374,6 +441,14 @@ class ToolCreator:
                     "",
                     "## Uso",
                     manifest["instructions"],
+                    "",
+                    "## Contrato",
+                    f"Executor: `{manifest['executor']}`",
+                    f"Callable: `{manifest['callable']}`",
+                    f"Input schema: `{json.dumps(manifest['input_schema'], ensure_ascii=False)}`",
+                    "",
+                    "## Dependencias",
+                    "Declaradas en `requirements.txt`. Instálalas manualmente en un entorno controlado si hacen falta.",
                     "",
                     "## Pruebas",
                     f"`python -m unittest discover -s {skill_dir.relative_to(self.project_root)} -p test*.py`",
@@ -425,7 +500,11 @@ class ToolCreator:
                     objective=spec.description or spec.name,
                     trigger_terms=", ".join(spec.triggers),
                     entrypoint=manifest["entrypoint"],
-                    instructions=manifest["instructions"],
+                    instructions=(
+                        f"Ejecutar tool skill.{slug} via executor=python_module, "
+                        f"callable={callable_name}, input_schema={manifest['input_schema']}. "
+                        f"{manifest['instructions']}"
+                    ),
                     evidence=f"Pruebas ejecutadas al instalar:\n{test_output[:600]}",
                     confidence=0.72,
                 )

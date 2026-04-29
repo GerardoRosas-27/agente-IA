@@ -49,3 +49,7 @@ def contact_payload(phone, message="", default_country_code=""):
         "wa_me_url": build_wa_me_url(phone, message, default_country_code),
         "deep_link": build_whatsapp_deep_link(phone, message, default_country_code),
     }
+
+
+def run(phone, message="", default_country_code=""):
+    return contact_payload(phone, message, default_country_code)

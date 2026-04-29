@@ -15,9 +15,21 @@
   ],
   "permissions": [],
   "entrypoint": "skills/whatsapp-link-tool/tool.py",
-  "executor": "",
+  "executor": "python_module",
   "command": "",
   "cwd": ".",
   "instructions": "Importa build_wa_me_url, build_whatsapp_deep_link o contact_payload desde tool.py. La herramienta no abre WhatsApp por si sola; devuelve enlaces listos para que la UI o el usuario los abra.",
-  "created": "2026-04-29T10:17:27"
+  "created": "2026-04-29T10:17:27",
+  "callable": "run",
+  "input_schema": {
+    "phone": "str",
+    "message": "str",
+    "default_country_code": "str"
+  },
+  "output_schema": {
+    "phone": "str",
+    "wa_me_url": "str",
+    "deep_link": "str"
+  },
+  "requirements": []
 }

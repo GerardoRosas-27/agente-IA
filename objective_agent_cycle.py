@@ -35,6 +35,8 @@ from skill_manager import SkillManager, parse_skill_learning_response
 from specialized_regions import SpecializedRegionStore
 from terminal_tool import parse_terminal_command_request, run_terminal_command
 from task_runtime import TaskRuntime
+from tool_build_runtime import ToolBuildRuntime
+from tool_creator import ToolCreator, tool_creation_objective
 from tool_library import ToolLibrary, parse_tool_memory_request
 from tool_preference_net import ToolPreferenceStore
 from tool_registry import ToolRegistry, build_default_tool_registry
@@ -522,6 +524,8 @@ def run_objective_pipeline(
     skill_manager_enabled = _env_bool("SKILL_MANAGER_ENABLED", True)
     skill_manager_max_results = _env_int("SKILL_MANAGER_MAX_RESULTS", 5, lo=1, hi=10)
     skill_execution_enabled = _env_bool("SKILL_EXECUTION_AGENT_ENABLED", True)
+    auto_tool_creation_enabled = _env_bool("AUTO_TOOL_CREATION_ENABLED", False)
+    auto_tool_creation_min_cycle = _env_int("AUTO_TOOL_CREATION_MIN_CYCLE", 1, lo=1, hi=20)
     persistent_memory_enabled = _env_bool("PERSISTENT_MEMORY_ENABLED", True)
     tool_preference_enabled = _env_bool("TOOL_PREFERENCE_NET_ENABLED", True)
     tool_preference_rank_limit = _env_int("TOOL_PREFERENCE_RANK_LIMIT", 8, lo=1, hi=20)
@@ -813,6 +817,105 @@ def run_objective_pipeline(
                 cycle_events.append(("AgentesModulares", modular_agent_ctx))
                 working_pool.add("AgentesModulares", modular_agent_ctx, salience=0.89)
                 mem_cur = _mem_step(memory, mem_cur, step_slot(), modular_agent_ctx)
+
+        if (
+            auto_tool_creation_enabled
+            and cyc + 1 >= auto_tool_creation_min_cycle
+            and active_skill_manager is not None
+            and tools is not None
+            and not tool_ctx
+            and not skill_ctx
+        ):
+            log("Sistema", "── AutoToolCreator (sin herramienta relevante; intenta crear una) ──")
+            try:
+                creator = ToolCreator(
+                    project_root=project_root,
+                    skill_manager=active_skill_manager,
+                    tool_library=tools,
+                    on_log=log,
+                )
+                builder = ToolBuildRuntime(creator=creator, project_root=project_root, max_repair_attempts=2)
+                sys_tool_create = (
+                    "Eres ToolCreator. Devuelve SOLO JSON valido para una herramienta Python "
+                    "instalable con codigo, pruebas unittest y contrato callable run."
+                )
+                initial_spec_text = _ollama(
+                    llm_chat,
+                    model,
+                    sys_tool_create,
+                    tool_creation_objective(obj_claro),
+                    num_predict=_role_budget(max(num_predict_final, 1200), "Revisor", cycle=cyc),
+                )
+
+                def _repair_tool(prompt: str) -> str:
+                    return _ollama(
+                        llm_chat,
+                        model,
+                        "Eres reparador de herramientas. Devuelve SOLO JSON valido corregido.",
+                        prompt,
+                        num_predict=_role_budget(max(num_predict_final, 1200), "Revisor", cycle=cyc),
+                    )
+
+                built = builder.build(
+                    user_objective=obj_claro,
+                    initial_text=initial_spec_text,
+                    cycles=1,
+                    reached=False,
+                    run_tests=True,
+                    timeout=float(os.getenv("SELF_IMPROVEMENT_TEST_TIMEOUT", "120") or "120"),
+                    repair_callback=_repair_tool,
+                )
+                logb(
+                    "AutoToolCreator",
+                    (
+                        f"Herramienta {'validada' if built.test_ok else 'experimental'}: {built.name}; "
+                        f"intentos={built.attempts}; log={built.build_log_path or '-'}"
+                    ),
+                )
+                cycle_events.append(("AutoToolCreator", built.name))
+                active_skill_manager.register_executable_tools(
+                    registry,
+                    run_terminal_fn=run_terminal_fn,
+                    project_root=str(project_root),
+                    tool_library=tools,
+                )
+                skill_ctx = registry.call(
+                    "skills.context",
+                    {
+                        "query": f"{obj_claro}\n{crit_txt}\n{raw[:1200]}",
+                        "limit": skill_manager_max_results,
+                        "max_chars": 1600,
+                    },
+                    runtime=runtime,
+                    task_id=task_id,
+                )
+                skill_ctx = str(skill_ctx or "").strip()
+                if skill_ctx:
+                    logb("Skills", skill_ctx)
+                    working_pool.add("Skills", skill_ctx, salience=0.88)
+                    mem_cur = _mem_step(memory, mem_cur, step_slot(), skill_ctx)
+                modular_agent_specs = active_skill_manager.agent_specs(
+                    f"{obj_claro}\n{crit_txt}\n{raw[:1200]}",
+                    limit=skill_manager_max_results,
+                )
+                modular_agent_ctx = registry.call(
+                    "skills.agents_context",
+                    {
+                        "query": f"{obj_claro}\n{crit_txt}\n{raw[:1200]}",
+                        "limit": skill_manager_max_results,
+                        "max_chars": 1600,
+                    },
+                    runtime=runtime,
+                    task_id=task_id,
+                )
+                modular_agent_ctx = str(modular_agent_ctx or "").strip()
+                if modular_agent_ctx:
+                    logb("AgentesModulares", modular_agent_ctx)
+                    working_pool.add("AgentesModulares", modular_agent_ctx, salience=0.89)
+            except Exception as exc:
+                if not auxiliary_fail_open:
+                    raise
+                log("AutoToolCreator", f"No se pudo crear herramienta automaticamente: {exc}")
 
         skill_run_acc = ""
         if skill_execution_enabled and modular_agent_specs:

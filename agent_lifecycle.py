@@ -60,13 +60,14 @@ def run_skill_agent_lifecycle(
         "Si solo debes aportar contexto, responde con una nota breve. "
         "Si tu skill tiene herramienta ejecutable y aporta evidencia real, solicita ejecutarla.\n"
         "Devuelve SOLO JSON válido:\n"
-        "{\"aporta\": false, \"ejecutar\": false, \"motivo\": \"...\", \"nota\": \"...\"}\n"
+        "{\"aporta\": false, \"ejecutar\": false, \"args\": {}, \"motivo\": \"...\", \"nota\": \"...\"}\n"
     )
     user_agent = (
         f"OBJETIVO_CLARO:\n{objective}\n\nCRITERIOS:\n{criteria}\n\n"
         f"DESCRIPCION_SKILL:\n{spec.get('description')}\n\n"
         f"INSTRUCCIONES_SKILL:\n{spec.get('instructions')}\n\n"
-        f"TOOL_NAME:\n{tool_name}\nEXECUTOR:\n{spec.get('executor') or '(sin executor)'}\n\n"
+        f"TOOL_NAME:\n{tool_name}\nEXECUTOR:\n{spec.get('executor') or '(sin executor)'}\n"
+        f"CALLABLE:\n{spec.get('callable') or '-'}\nINPUT_SCHEMA:\n{spec.get('input_schema') or {}}\n\n"
         "Decide tu aporte. JSON:"
     )
     out_agent = llm_call(sys_agent, user_agent, num_predict)
@@ -85,6 +86,9 @@ def run_skill_agent_lifecycle(
     ejecutar = _json_bool(agent_data.get("ejecutar"), False)
     motivo = str(agent_data.get("motivo", "") or "").strip()
     nota = str(agent_data.get("nota", "") or "").strip()
+    args = agent_data.get("args", {})
+    if not isinstance(args, dict):
+        args = {}
     parts = []
     if motivo:
         parts.append(f"Motivo: {motivo}")
@@ -93,7 +97,7 @@ def run_skill_agent_lifecycle(
 
     executed_tool = ""
     if ejecutar and tool_name and spec.get("executor"):
-        result = registry.call(tool_name, {}, runtime=runtime, task_id=task_id)
+        result = registry.call(tool_name, args, runtime=runtime, task_id=task_id)
         rendered = result.render() if hasattr(result, "render") else str(result)
         executed_tool = tool_name
         parts.append(f"Ejecutó {tool_name}:\n{rendered}")

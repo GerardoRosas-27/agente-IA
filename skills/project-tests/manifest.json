@@ -21,5 +21,9 @@
   "executor": "terminal_command",
   "command": "python -m unittest discover -s tests",
   "cwd": ".",
-  "instructions": "Usa este skill cuando el objetivo requiera verificar que los cambios del sistema no rompieron la suite de pruebas."
+  "instructions": "Usa este skill cuando el objetivo requiera verificar que los cambios del sistema no rompieron la suite de pruebas.",
+  "callable": "run",
+  "input_schema": {},
+  "output_schema": {},
+  "requirements": []
 }

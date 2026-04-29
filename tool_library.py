@@ -245,6 +245,34 @@ class ToolLibrary:
         finally:
             conn.close()
 
+    def mark_success(self, name: str, entrypoint: str = "") -> None:
+        if not name.strip():
+            return
+        updated = time.strftime("%Y-%m-%dT%H:%M:%S")
+        conn = self._connect()
+        try:
+            if entrypoint.strip():
+                conn.execute(
+                    """UPDATE tool_library
+                       SET success_count=success_count + 1,
+                           confidence=min(1.0, confidence + 0.06),
+                           updated=?
+                       WHERE name=? AND entrypoint=?""",
+                    (updated, name.strip(), entrypoint.strip()),
+                )
+            else:
+                conn.execute(
+                    """UPDATE tool_library
+                       SET success_count=success_count + 1,
+                           confidence=min(1.0, confidence + 0.06),
+                           updated=?
+                       WHERE name=?""",
+                    (updated, name.strip()),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
     def delete(self, name: str, entrypoint: str = "") -> int:
         if not name.strip():
             return 0

@@ -1,5 +1,5 @@
 import unittest
-from tool import build_wa_me_url, build_whatsapp_deep_link, contact_payload, normalize_phone
+from tool import build_wa_me_url, build_whatsapp_deep_link, contact_payload, normalize_phone, run
 
 
 class TestWhatsAppLinkTool(unittest.TestCase):
@@ -23,6 +23,10 @@ class TestWhatsAppLinkTool(unittest.TestCase):
         self.assertIn("wa_me_url", payload)
         with self.assertRaises(ValueError):
             normalize_phone("")
+
+    def test_run_contract(self):
+        payload = run("5512345678", "hola", "52")
+        self.assertEqual(payload["phone"], "525512345678")
 
 
 if __name__ == "__main__":

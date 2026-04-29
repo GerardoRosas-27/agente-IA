@@ -252,6 +252,7 @@ def build_default_tool_registry(
                 registry,
                 run_terminal_fn=run_terminal_fn,
                 project_root=project_root,
+                tool_library=tool_library,
             )
         except Exception:
             pass

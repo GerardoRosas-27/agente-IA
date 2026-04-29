@@ -329,10 +329,14 @@ class TestTaskRuntimeAndToolRegistry(unittest.TestCase):
           "name": "sum-helper",
           "description": "Suma listas de numeros",
           "triggers": ["sumar", "lista"],
-          "code": "def sum_numbers(values):\\n    return sum(values)\\n",
-          "test_code": "import unittest\\nfrom tool import sum_numbers\\n\\nclass TestSumNumbers(unittest.TestCase):\\n    def test_normal(self):\\n        self.assertEqual(sum_numbers([1, 2, 3]), 6)\\n    def test_empty(self):\\n        self.assertEqual(sum_numbers([]), 0)\\n\\nif __name__ == '__main__':\\n    unittest.main()\\n",
+          "code": "def sum_numbers(values):\\n    return sum(values)\\n\\ndef run(values):\\n    return {\\\"total\\\": sum_numbers(values)}\\n",
+          "test_code": "import unittest\\nfrom tool import run, sum_numbers\\n\\nclass TestSumNumbers(unittest.TestCase):\\n    def test_normal(self):\\n        self.assertEqual(sum_numbers([1, 2, 3]), 6)\\n    def test_empty(self):\\n        self.assertEqual(sum_numbers([]), 0)\\n    def test_run_contract(self):\\n        self.assertEqual(run([2, 3]), {\\\"total\\\": 5})\\n\\nif __name__ == '__main__':\\n    unittest.main()\\n",
           "instructions": "Importar sum_numbers desde tool.py.",
-          "risk": "low"
+          "risk": "low",
+          "callable": "run",
+          "input_schema": {"values": "list[int]"},
+          "output_schema": {"total": "int"},
+          "requirements": []
         }
         """
 
@@ -347,11 +351,79 @@ class TestTaskRuntimeAndToolRegistry(unittest.TestCase):
             )
             result = creator.install(parse_generated_tool_spec(response), timeout=10)
             entries = library.list_entries()
+            manifest = (result.skill_dir / "manifest.json").read_text(encoding="utf-8")
+            requirements = (result.skill_dir / "requirements.txt").read_text(encoding="utf-8")
 
         self.assertTrue(result.test_ok, result.test_output)
         self.assertEqual(result.name, "sum-helper")
         self.assertTrue(entries)
         self.assertEqual(entries[0].entrypoint, "skills/sum-helper/tool.py")
+        self.assertIn('"executor": "python_module"', manifest)
+        self.assertIn('"callable": "run"', manifest)
+        self.assertEqual(requirements, "")
+
+    def test_skill_manager_registers_python_module_skill(self) -> None:
+        import json
+
+        from skill_manager import SkillManager
+        from task_runtime import TaskRuntime
+        from tool_library import ToolLibrary, ToolMemory
+        from tool_registry import ToolRegistry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skill_dir = root / "skills" / "sum-helper"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "tool.py").write_text(
+                "def run(a, b):\n    return {'total': a + b}\n",
+                encoding="utf-8",
+            )
+            (skill_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "name": "sum-helper",
+                        "description": "Suma dos numeros",
+                        "risk": "low",
+                        "status": "validated",
+                        "executor": "python_module",
+                        "entrypoint": "skills/sum-helper/tool.py",
+                        "callable": "run",
+                        "input_schema": {"a": "int", "b": "int"},
+                        "output_schema": {"total": "int"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            library = ToolLibrary(root / "tools.sqlite", embed_dim=16)
+            library.upsert(
+                ToolMemory(
+                    name="sum-helper",
+                    kind="python_module",
+                    objective="sumar",
+                    trigger_terms="sumar",
+                    entrypoint="skills/sum-helper/tool.py",
+                    instructions="usar run",
+                    evidence="ok",
+                    confidence=0.5,
+                )
+            )
+            registry = ToolRegistry()
+            SkillManager(root / "skills").register_executable_tools(
+                registry,
+                run_terminal_fn=lambda *_args, **_kwargs: "",
+                project_root=str(root),
+                tool_library=library,
+            )
+            runtime = TaskRuntime(root / "runtime.sqlite")
+            task_id = runtime.start_task("sumar")
+            result = registry.call("skill.sum-helper", {"a": 2, "b": 3}, runtime=runtime, task_id=task_id)
+            calls = runtime.recent_tool_calls(task_id)
+            updated = library.list_entries()[0]
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.output["total"], 5)
+        self.assertIn('"a": 2', calls[0]["request"])
+        self.assertGreater(updated.success_count, 1)
 
     def test_tool_creator_rejects_dangerous_generated_code(self) -> None:
         from tool_creator import parse_generated_tool_spec

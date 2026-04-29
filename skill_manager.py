@@ -8,6 +8,7 @@ agentico sin meter cada nueva capacidad directo al core.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,10 @@ class SkillManifest:
     entrypoint: str
     executor: str
     command: str
+    callable_name: str
+    input_schema: dict[str, str]
+    output_schema: dict[str, str]
+    requirements: list[str]
     cwd: str
     instructions: str
     path: str
@@ -46,6 +51,18 @@ class SkillManager:
         if isinstance(value, str) and value.strip():
             return [part.strip() for part in value.split(",") if part.strip()]
         return []
+
+    @staticmethod
+    def _as_schema(value: Any) -> dict[str, str]:
+        if not isinstance(value, dict):
+            return {}
+        schema: dict[str, str] = {}
+        for key, val in value.items():
+            name = str(key).strip()
+            if not name:
+                continue
+            schema[name] = str(val or "str").strip()[:80] or "str"
+        return schema
 
     @staticmethod
     def _terms(text: str) -> set[str]:
@@ -109,6 +126,10 @@ class SkillManager:
                     entrypoint=str(data.get("entrypoint") or "").strip(),
                     executor=str(data.get("executor") or "").strip(),
                     command=str(data.get("command") or "").strip(),
+                    callable_name=str(data.get("callable") or data.get("callable_name") or "run").strip(),
+                    input_schema=self._as_schema(data.get("input_schema")),
+                    output_schema=self._as_schema(data.get("output_schema")),
+                    requirements=self._as_list(data.get("requirements")),
                     cwd=str(data.get("cwd") or ".").strip(),
                     instructions=str(data.get("instructions") or "").strip(),
                     path=str(manifest_path.parent),
@@ -160,6 +181,10 @@ class SkillManager:
                     "entrypoint": str(data.get("entrypoint") or "").strip(),
                     "executor": str(data.get("executor") or "").strip(),
                     "command": str(data.get("command") or "").strip(),
+                    "callable": str(data.get("callable") or data.get("callable_name") or "run").strip() or "run",
+                    "input_schema": self._as_schema(data.get("input_schema")),
+                    "output_schema": self._as_schema(data.get("output_schema")),
+                    "requirements": self._as_list(data.get("requirements")),
                     "cwd": str(data.get("cwd") or ".").strip() or ".",
                     "instructions": str(data.get("instructions") or "").strip(),
                 }
@@ -199,8 +224,10 @@ class SkillManager:
                 f"{skill.name} v{skill.version} [{skill.status}, risk={skill.risk}] score={score:.2f}; "
                 f"entrypoint={skill.entrypoint or 'manifest-only'}; "
                 f"executor={skill.executor or 'context'}; "
+                f"callable={skill.callable_name if skill.executor == 'python_module' else '-'}; "
                 f"triggers={', '.join(skill.triggers) or '-'}; "
                 f"permissions={', '.join(skill.permissions) or '-'}; "
+                f"requirements={', '.join(skill.requirements) or '-'}; "
                 f"instrucciones={skill.instructions[:360]}"
             )
         return "\n".join(lines)[: max(300, int(max_chars))]
@@ -226,37 +253,85 @@ class SkillManager:
         *,
         run_terminal_fn: Callable[..., object],
         project_root: str,
+        tool_library: Any | None = None,
     ) -> None:
         from tool_registry import RegisteredTool
+        from skill_python_runtime import run_python_skill
 
         for skill in self.load_skills():
-            if skill.executor != "terminal_command" or not skill.command:
+            if skill.executor == "terminal_command" and skill.command:
+
+                def _handler(
+                    *,
+                    _command: str = skill.command,
+                    _cwd: str = skill.cwd or ".",
+                    _skill_name: str = skill.name,
+                    _entrypoint: str = skill.entrypoint,
+                ) -> object:
+                    try:
+                        result = run_terminal_fn(
+                            _command,
+                            project_root=project_root,
+                            cwd=_cwd,
+                            timeout=20.0,
+                            max_output_chars=6000,
+                        )
+                    except Exception:
+                        if tool_library is not None:
+                            tool_library.mark_failure(_skill_name, _entrypoint)
+                        raise
+                    if tool_library is not None:
+                        tool_library.mark_success(_skill_name, _entrypoint)
+                    return result
+
+                registry.register(
+                    RegisteredTool(
+                        name=self._tool_name(skill),
+                        description=skill.description or skill.instructions[:160],
+                        risk=skill.risk if skill.risk in {"low", "moderate", "high", "dangerous"} else "high",
+                        input_schema={},
+                        handler=lambda _handler=_handler: _handler(),
+                        default_enabled=skill.status != "disabled",
+                        enabled_env="SKILL_MANAGER_ENABLED",
+                    )
+                )
                 continue
 
-            def _handler(
-                *,
-                _command: str = skill.command,
-                _cwd: str = skill.cwd or ".",
-            ) -> object:
-                return run_terminal_fn(
-                    _command,
-                    project_root=project_root,
-                    cwd=_cwd,
-                    timeout=20.0,
-                    max_output_chars=6000,
-                )
+            if skill.executor == "python_module" and skill.entrypoint:
 
-            registry.register(
-                RegisteredTool(
-                    name=self._tool_name(skill),
-                    description=skill.description or skill.instructions[:160],
-                    risk=skill.risk if skill.risk in {"low", "moderate", "high", "dangerous"} else "high",
-                    input_schema={},
-                    handler=lambda _handler=_handler: _handler(),
-                    default_enabled=skill.status != "disabled",
-                    enabled_env="SKILL_MANAGER_ENABLED",
+                def _python_handler(
+                    *,
+                    _skill: SkillManifest = skill,
+                    **kwargs: Any,
+                ) -> object:
+                    result = run_python_skill(
+                        skill_name=_skill.name,
+                        entrypoint=_skill.entrypoint,
+                        callable_name=_skill.callable_name or "run",
+                        kwargs=kwargs,
+                        project_root=project_root,
+                        timeout=float(os.getenv("PYTHON_SKILL_TIMEOUT", "20") or "20"),
+                        max_output_chars=6000,
+                    )
+                    if result.ok:
+                        if tool_library is not None:
+                            tool_library.mark_success(_skill.name, _skill.entrypoint)
+                        return result
+                    if tool_library is not None:
+                        tool_library.mark_failure(_skill.name, _skill.entrypoint)
+                    raise RuntimeError(result.render())
+
+                registry.register(
+                    RegisteredTool(
+                        name=self._tool_name(skill),
+                        description=skill.description or skill.instructions[:160],
+                        risk=skill.risk if skill.risk in {"low", "moderate", "high", "dangerous"} else "moderate",
+                        input_schema=skill.input_schema,
+                        handler=lambda _python_handler=_python_handler, **kwargs: _python_handler(**kwargs),
+                        default_enabled=skill.status != "disabled",
+                        enabled_env="SKILL_MANAGER_ENABLED",
+                    )
                 )
-            )
 
     def agent_specs(self, query: str, *, limit: int = 6) -> list[dict[str, Any]]:
         specs: list[dict[str, Any]] = []
@@ -274,6 +349,10 @@ class SkillManager:
                     "status": skill.status,
                     "executor": skill.executor,
                     "entrypoint": skill.entrypoint,
+                    "callable": skill.callable_name,
+                    "input_schema": skill.input_schema,
+                    "output_schema": skill.output_schema,
+                    "requirements": skill.requirements,
                     "instructions": skill.instructions,
                     "triggers": skill.triggers,
                     "permissions": skill.permissions,
@@ -292,6 +371,7 @@ class SkillManager:
                 f"{spec['name']} gestiona skill={spec['skill_name']} "
                 f"tool={spec['tool_name']} risk={spec['risk']} score={spec['score']:.2f}; "
                 f"executor={spec['executor'] or 'context'}; "
+                f"callable={spec.get('callable') or '-'}; "
                 f"instrucciones={str(spec['instructions'])[:320]}"
             )
         return "\n".join(lines)[: max(300, int(max_chars))]
@@ -309,6 +389,10 @@ class SkillManager:
         command: str = "",
         cwd: str = ".",
         status: str = "experimental",
+        callable_name: str = "run",
+        input_schema: dict[str, str] | None = None,
+        output_schema: dict[str, str] | None = None,
+        requirements: list[str] | None = None,
     ) -> Path:
         slug = self.slugify(name)
         skill_dir = self.skills_dir / slug
@@ -338,6 +422,10 @@ class SkillManager:
             "entrypoint": command or old.get("entrypoint", ""),
             "executor": executor,
             "command": command,
+            "callable": callable_name or old.get("callable", "run"),
+            "input_schema": self._as_schema(input_schema or old.get("input_schema")),
+            "output_schema": self._as_schema(output_schema or old.get("output_schema")),
+            "requirements": self._as_list(requirements or old.get("requirements")),
             "cwd": cwd or ".",
             "instructions": instructions.strip()[:1800],
             "success_count": success_count,
@@ -417,6 +505,10 @@ def parse_skill_learning_response(text: str) -> list[dict[str, Any]]:
                 "risk": str(item.get("risk", "moderate") or "moderate").strip().lower(),
                 "executor": str(item.get("executor", "") or "").strip(),
                 "command": str(item.get("command", "") or "").strip(),
+                "callable_name": str(item.get("callable", item.get("callable_name", "run")) or "run").strip(),
+                "input_schema": SkillManager._as_schema(item.get("input_schema")),
+                "output_schema": SkillManager._as_schema(item.get("output_schema")),
+                "requirements": SkillManager._as_list(item.get("requirements")),
                 "cwd": str(item.get("cwd", ".") or ".").strip(),
                 "status": str(item.get("status", "experimental") or "experimental").strip().lower(),
             }

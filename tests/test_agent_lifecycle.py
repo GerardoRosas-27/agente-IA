@@ -51,8 +51,8 @@ class TestAgentLifecycle(unittest.TestCase):
                     name="skill.demo",
                     description="demo",
                     risk="low",
-                    input_schema={},
-                    handler=lambda: "resultado herramienta",
+                    input_schema={"text": "str"},
+                    handler=lambda text: f"resultado herramienta:{text}",
                 )
             )
             result = run_skill_agent_lifecycle(
@@ -60,7 +60,8 @@ class TestAgentLifecycle(unittest.TestCase):
                     "name": "AgenteSkill:demo",
                     "skill_name": "demo",
                     "tool_name": "skill.demo",
-                    "executor": "terminal_command",
+                    "executor": "python_module",
+                    "input_schema": {"text": "str"},
                     "description": "demo",
                     "instructions": "ejecutar",
                 },
@@ -68,6 +69,7 @@ class TestAgentLifecycle(unittest.TestCase):
                 criteria="- ejecutar herramienta",
                 llm_call=lambda _system, _user, _budget: (
                     '{"aporta": true, "ejecutar": true, '
+                    '"args": {"text": "hola"}, '
                     '"motivo": "necesita evidencia", "nota": ""}'
                 ),
                 registry=registry,

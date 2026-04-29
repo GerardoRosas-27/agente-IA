@@ -92,9 +92,12 @@ class TestPersistentLearning(unittest.TestCase):
             second = lib.list_entries()[0].confidence
             lib.mark_failure("demo", "demo")
             third = lib.list_entries()[0].confidence
+            lib.mark_success("demo", "demo")
+            fourth = lib.list_entries()[0].confidence
 
         self.assertGreaterEqual(second, first)
         self.assertLess(third, second)
+        self.assertGreater(fourth, third)
 
 
 if __name__ == "__main__":

@@ -105,12 +105,19 @@ class ToolBuildRuntime:
                 "test_code": spec.test_code,
                 "instructions": spec.instructions,
                 "risk": spec.risk,
+                "callable": spec.callable_name,
+                "input_schema": spec.input_schema or {},
+                "output_schema": spec.output_schema or {},
+                "permissions": spec.permissions or [],
+                "requirements": spec.requirements or [],
             },
         }
         return (
             "Corrige esta herramienta. Devuelve SOLO JSON valido con: "
-            "name, description, triggers, code, test_code, instructions, risk. "
+            "name, description, triggers, code, test_code, instructions, risk, callable, "
+            "input_schema, output_schema, permissions, requirements. "
             "El codigo debe importarse sin efectos secundarios. Las pruebas deben usar unittest. "
+            "La herramienta debe exponer el callable indicado, preferentemente run(...). "
             "Si usa red/API, usa tokens por parametro y mocks en test_code; no pongas secretos reales. "
             "No uses subprocess, eval, exec ni input interactivo.\n\n"
             + json.dumps(payload, ensure_ascii=False)

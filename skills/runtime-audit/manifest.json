@@ -22,5 +22,9 @@
   "instructions": "Usa el boton Auditoria de la interfaz para inspeccionar objetivos recientes y llamadas de herramientas registradas por TaskRuntime.",
   "executor": "",
   "command": "",
-  "cwd": "."
+  "cwd": ".",
+  "callable": "run",
+  "input_schema": {},
+  "output_schema": {},
+  "requirements": []
 }
