@@ -11,7 +11,7 @@ import threading
 
 import torch
 import tkinter as tk
-from tkinter import messagebox, scrolledtext
+from tkinter import messagebox, scrolledtext, simpledialog
 
 from app_config import grouped_specs, load_config, save_config
 from cognitive_regions import CognitiveSystem, start_rest_cycle_worker
@@ -29,6 +29,7 @@ from persistent_memory import PersistentMemoryStore
 from skill_manager import SkillManager
 from task_runtime import TaskRuntime
 from tool_library import ToolLibrary
+from tool_creator import ToolCreator
 from unified_fly_memory import SharedFlyMemory
 
 
@@ -686,6 +687,125 @@ def main() -> None:
                 parent=win,
             )
 
+        def create_new_tool() -> None:
+            if busy["v"]:
+                messagebox.showinfo(
+                    "Crear herramienta",
+                    "El ciclo principal ya está trabajando. Espera a que termine.",
+                    parent=win,
+                )
+                return
+            objective = simpledialog.askstring(
+                "Crear nueva herramienta",
+                "Describe qué herramienta quieres crear y probar:",
+                parent=win,
+            )
+            if not objective or not objective.strip():
+                return
+            try:
+                save_config(collect_values())
+            except Exception as exc:
+                messagebox.showerror("Configuración", str(exc), parent=win)
+                return
+
+            try:
+                run_tests = str(os.getenv("SELF_IMPROVEMENT_RUN_TESTS", "1")).strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "si",
+                    "sí",
+                    "on",
+                }
+                test_timeout = float(os.getenv("SELF_IMPROVEMENT_TEST_TIMEOUT", "120") or "120")
+            except ValueError:
+                run_tests, test_timeout = True, 120.0
+
+            busy["v"] = True
+            emit(
+                "Sistema",
+                "Creando nueva herramienta con el ciclo principal; se instalará como skill si las pruebas pasan.",
+            )
+            creator = ToolCreator(skill_manager=skill_manager, tool_library=tool_library)
+            cycle_buf = CycleBuffer()
+
+            def pipeline_runner(cycle_objective: str) -> tuple[str, int, float, bool]:
+                return run_objective_pipeline(
+                    cycle_objective,
+                    shared_mem,
+                    llm_model_id,
+                    llm_chat_fn,
+                    cycle_buffer=cycle_buf,
+                    plastic_aux=plastic_aux,
+                    experience_replay=experience_replay,
+                    tool_library=tool_library,
+                    skill_manager=skill_manager,
+                    persistent_memory=persistent_memory,
+                    cognitive_system=cognitive_system,
+                    task_runtime=task_runtime,
+                    autonomous_mode=bool(autonomous_var.get()),
+                    approval_callback=approve_tool_call,
+                    weights_ready=weights_ready,
+                    num_predict=args.num_predict,
+                    num_predict_final=max(args.num_predict_final, 1200),
+                    max_cycles=max(1, min(5, args.max_cycles)),
+                    n_discuss=max(1, min(3, args.discuss)),
+                    n_execute=max(1, min(3, args.execute)),
+                    n_test=max(1, min(2, args.test)),
+                    on_log=emit,
+                    on_cycle_checkpoint=lambda: store.save(shared_mem, plastic_aux),
+                )
+
+            def worker() -> None:
+                try:
+                    result = creator.create_with_main_cycle(
+                        objective.strip(),
+                        pipeline_runner=pipeline_runner,
+                        run_tests=run_tests,
+                        timeout=test_timeout,
+                    )
+                except Exception as exc:
+                    root.after(0, lambda exc=exc: on_fail(exc))
+                    return
+
+                def done() -> None:
+                    status = "validada" if result.test_ok else "instalada como experimental"
+                    append(
+                        "g",
+                        "[CrearHerramienta]",
+                        (
+                            f"Herramienta {status}: {result.name}\n"
+                            f"Ruta: {result.skill_dir}\n"
+                            f"Ciclos usados: {result.cycles}\n\n"
+                            f"Pruebas:\n{result.test_output}"
+                        ),
+                    )
+                    try:
+                        store.save(shared_mem, plastic_aux)
+                    except Exception as exc:
+                        append("s", "[Persistencia]", str(exc))
+                    busy["v"] = False
+                    if result.test_ok:
+                        messagebox.showinfo(
+                            "Crear herramienta",
+                            f"Herramienta instalada y probada: {result.name}",
+                            parent=win,
+                        )
+                    else:
+                        messagebox.showwarning(
+                            "Crear herramienta",
+                            f"La herramienta se instaló como experimental porque fallaron las pruebas: {result.name}",
+                            parent=win,
+                        )
+
+                root.after(0, done)
+
+            def on_fail(exc: Exception) -> None:
+                busy["v"] = False
+                messagebox.showerror("Crear herramienta", str(exc), parent=win)
+
+            threading.Thread(target=worker, daemon=True).start()
+
         tk.Button(
             header,
             text="Guardar .env",
@@ -696,6 +816,16 @@ def main() -> None:
             relief="flat",
             padx=12,
         ).pack(side="right")
+        tk.Button(
+            header,
+            text="Crear nuevas herramientas",
+            command=create_new_tool,
+            bg="#0f766e",
+            fg="white",
+            activebackground="#0d9488",
+            relief="flat",
+            padx=12,
+        ).pack(side="right", padx=(0, 8))
 
     def on_run(_ev=None) -> None:
         if busy["v"]:

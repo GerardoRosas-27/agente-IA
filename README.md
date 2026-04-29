@@ -44,6 +44,55 @@ version de Ollama, prueba `gemma2:2b` o `gemma2:1b` y pasalo con
 
 ## Uso
 
+### Comandos principales
+
+Instalar dependencias:
+
+```bash
+pip install -r requirements.txt
+```
+
+Crear configuracion local:
+
+```bash
+copy .env.example .env
+```
+
+Ejecutar la interfaz principal:
+
+```bash
+python multi_agent_app.py
+```
+
+Ejecutar con parametros del ciclo:
+
+```bash
+python multi_agent_app.py --max-cycles 5 --discuss 2 --execute 2 --test 2
+python multi_agent_app.py --torch-threads 1 --replay-capacity 240
+```
+
+Abrir la app con modelo indicado por argumento:
+
+```bash
+python multi_agent_app.py --llm-model gemma3:270m
+```
+
+Arrancar el servidor LLM de prueba si LM Studio no responde:
+
+```bash
+python llm_test_api_server.py
+```
+
+Ejecutar pruebas del proyecto:
+
+```bash
+python -m unittest discover -s tests
+```
+
+Desde la UI principal puedes abrir `Configuración`, guardar `.env` y usar
+`Crear nuevas herramientas` para generar, probar e instalar herramientas en
+`skills/<nombre>/`.
+
 Modo rapido (conectoma sintetico, sin internet, util para validar):
 
 ```bash

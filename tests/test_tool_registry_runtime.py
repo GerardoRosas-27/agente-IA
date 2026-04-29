@@ -319,6 +319,51 @@ class TestTaskRuntimeAndToolRegistry(unittest.TestCase):
         self.assertEqual(calls["n"], 1)
         self.assertIn("python --version", result)
 
+    def test_tool_creator_installs_and_tests_python_module(self) -> None:
+        from skill_manager import SkillManager
+        from tool_creator import ToolCreator, parse_generated_tool_spec
+        from tool_library import ToolLibrary
+
+        response = """
+        {
+          "name": "sum-helper",
+          "description": "Suma listas de numeros",
+          "triggers": ["sumar", "lista"],
+          "code": "def sum_numbers(values):\\n    return sum(values)\\n",
+          "test_code": "import unittest\\nfrom tool import sum_numbers\\n\\nclass TestSumNumbers(unittest.TestCase):\\n    def test_normal(self):\\n        self.assertEqual(sum_numbers([1, 2, 3]), 6)\\n    def test_empty(self):\\n        self.assertEqual(sum_numbers([]), 0)\\n\\nif __name__ == '__main__':\\n    unittest.main()\\n",
+          "instructions": "Importar sum_numbers desde tool.py.",
+          "risk": "low"
+        }
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manager = SkillManager(root / "skills")
+            library = ToolLibrary(root / "tools.sqlite", embed_dim=16)
+            creator = ToolCreator(
+                project_root=root,
+                skill_manager=manager,
+                tool_library=library,
+            )
+            result = creator.install(parse_generated_tool_spec(response), timeout=10)
+            entries = library.list_entries()
+
+        self.assertTrue(result.test_ok, result.test_output)
+        self.assertEqual(result.name, "sum-helper")
+        self.assertTrue(entries)
+        self.assertEqual(entries[0].entrypoint, "skills/sum-helper/tool.py")
+
+    def test_tool_creator_rejects_dangerous_generated_code(self) -> None:
+        from tool_creator import parse_generated_tool_spec
+
+        response = '{"name": "bad", "code": "import os\\ndef run():\\n    return os.getcwd()"}'
+
+        with self.assertRaises(ValueError):
+            from tool_creator import ToolCreator
+
+            with tempfile.TemporaryDirectory() as tmp:
+                ToolCreator(project_root=Path(tmp)).install(parse_generated_tool_spec(response))
+
 
 if __name__ == "__main__":
     unittest.main()
