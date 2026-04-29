@@ -12,6 +12,8 @@ __pycache__/
 data/connections.csv
 data/connections_princeton.csv.gz
 data/plastic_swarm.sqlite
+data/chat_logs/
+data/tool_build_logs/
 
 # Pesos y caché de modelos (LM Studio, Ollama, Hugging Face, etc.) — no subir al repo
 models/

@@ -356,13 +356,195 @@ class TestTaskRuntimeAndToolRegistry(unittest.TestCase):
     def test_tool_creator_rejects_dangerous_generated_code(self) -> None:
         from tool_creator import parse_generated_tool_spec
 
-        response = '{"name": "bad", "code": "import os\\ndef run():\\n    return os.getcwd()"}'
+        response = '{"name": "bad", "code": "import subprocess\\ndef run():\\n    return subprocess.run([\'python\', \'--version\'])"}'
 
         with self.assertRaises(ValueError):
             from tool_creator import ToolCreator
 
             with tempfile.TemporaryDirectory() as tmp:
                 ToolCreator(project_root=Path(tmp)).install(parse_generated_tool_spec(response))
+
+    def test_tool_creation_objective_allows_research_and_network_design(self) -> None:
+        from tool_creator import tool_creation_objective
+
+        objective = tool_creation_objective("conectar con WhatsApp Cloud API")
+
+        self.assertIn("Puedes investigar por internet", objective)
+        self.assertIn("Ignora sesiones o memorias anteriores", objective)
+        self.assertIn("WhatsApp Cloud API", objective)
+        self.assertNotIn("No uses red", objective)
+
+    def test_tool_creator_recovers_whatsapp_request_when_cycle_only_plans(self) -> None:
+        from skill_manager import SkillManager
+        from tool_creator import ToolCreator
+        from tool_library import ToolLibrary
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            creator = ToolCreator(
+                project_root=root,
+                skill_manager=SkillManager(root / "skills"),
+                tool_library=ToolLibrary(root / "tools.sqlite", embed_dim=16),
+            )
+
+            def fake_pipeline(_objective: str):
+                return (
+                    "No hace falta crear una herramienta nueva; usa project-tests.",
+                    1,
+                    0.0,
+                    False,
+                )
+
+            result = creator.create_with_main_cycle(
+                "crear herramienta para conectarme a waptsap",
+                pipeline_runner=fake_pipeline,
+                timeout=10,
+            )
+            tool_py = result.skill_dir / "tool.py"
+            tool_source = tool_py.read_text(encoding="utf-8")
+            entries = creator.tool_library.list_entries() if creator.tool_library else []
+
+        self.assertTrue(result.test_ok, result.test_output)
+        self.assertEqual(result.name, "whatsapp-link-tool")
+        self.assertIn("build_wa_me_url", tool_source)
+        self.assertTrue(entries)
+        self.assertEqual(entries[0].name, "whatsapp-link-tool")
+
+    def test_tool_creator_retries_recovered_tool_when_generated_tests_fail(self) -> None:
+        import json
+
+        from skill_manager import SkillManager
+        from tool_creator import ToolCreator
+        from tool_library import ToolLibrary
+
+        generated = json.dumps(
+            {
+                "name": "whatsapp-broken",
+                "description": "whatsapp roto",
+                "triggers": ["whatsapp"],
+                "code": "def build_wa_me_url(phone):\n    return 'bad'\n",
+                "test_code": (
+                    "import unittest\n"
+                    "from tool import build_wa_me_url\n\n"
+                    "class TestBroken(unittest.TestCase):\n"
+                    "    def test_url(self):\n"
+                    "        self.assertEqual(build_wa_me_url('1'), 'expected')\n\n"
+                    "if __name__ == '__main__':\n"
+                    "    unittest.main()\n"
+                ),
+                "instructions": "usar",
+                "risk": "low",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            creator = ToolCreator(
+                project_root=root,
+                skill_manager=SkillManager(root / "skills"),
+                tool_library=ToolLibrary(root / "tools.sqlite", embed_dim=16),
+            )
+
+            def fake_pipeline(_objective: str):
+                return generated, 1, 0.0, True
+
+            result = creator.create_with_main_cycle(
+                "crear herramienta para conectarme a whatsapp",
+                pipeline_runner=fake_pipeline,
+                timeout=10,
+            )
+            entries = creator.tool_library.list_entries() if creator.tool_library else []
+
+        self.assertTrue(result.test_ok, result.test_output)
+        self.assertEqual(result.name, "whatsapp-link-tool")
+        self.assertTrue(entries)
+        self.assertEqual(entries[0].name, "whatsapp-link-tool")
+
+    def test_objective_cycle_extracts_candidate_code_block_for_probe(self) -> None:
+        from objective_agent_cycle import first_code_block
+
+        text = "Propuesta:\n```python\nprint('ok')\n```\nFin"
+
+        self.assertEqual(first_code_block(text, ("python", "py")), "print('ok')")
+
+    def test_tool_build_runtime_repairs_failed_tool_with_callback(self) -> None:
+        import json
+
+        from skill_manager import SkillManager
+        from tool_build_runtime import ToolBuildRuntime
+        from tool_creator import ToolCreator
+        from tool_library import ToolLibrary
+
+        broken = json.dumps(
+            {
+                "name": "sum-tool",
+                "description": "Suma numeros",
+                "triggers": ["sumar"],
+                "code": "def add(a, b):\n    return a - b\n",
+                "test_code": (
+                    "import unittest\nfrom tool import add\n\n"
+                    "class TestAdd(unittest.TestCase):\n"
+                    "    def test_add(self):\n"
+                    "        self.assertEqual(add(2, 3), 5)\n\n"
+                    "if __name__ == '__main__':\n"
+                    "    unittest.main()\n"
+                ),
+                "instructions": "Usar add(a, b).",
+                "risk": "low",
+            }
+        )
+        fixed = json.dumps(
+            {
+                "name": "sum-tool",
+                "description": "Suma numeros",
+                "triggers": ["sumar"],
+                "code": "def add(a, b):\n    return a + b\n",
+                "test_code": (
+                    "import unittest\nfrom tool import add\n\n"
+                    "class TestAdd(unittest.TestCase):\n"
+                    "    def test_add(self):\n"
+                    "        self.assertEqual(add(2, 3), 5)\n"
+                    "    def test_zero(self):\n"
+                    "        self.assertEqual(add(0, 0), 0)\n\n"
+                    "if __name__ == '__main__':\n"
+                    "    unittest.main()\n"
+                ),
+                "instructions": "Usar add(a, b).",
+                "risk": "low",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            creator = ToolCreator(
+                project_root=root,
+                skill_manager=SkillManager(root / "skills"),
+                tool_library=ToolLibrary(root / "tools.sqlite", embed_dim=16),
+            )
+            builder = ToolBuildRuntime(creator=creator, project_root=root, max_repair_attempts=2)
+            repair_calls = {"n": 0}
+
+            def repair(_prompt: str) -> str:
+                repair_calls["n"] += 1
+                return fixed
+
+            result = builder.build(
+                user_objective="crear herramienta para sumar numeros",
+                initial_text=broken,
+                cycles=1,
+                reached=True,
+                repair_callback=repair,
+                timeout=10,
+            )
+            log_exists = Path(result.build_log_path).exists()
+            entries = creator.tool_library.list_entries() if creator.tool_library else []
+
+        self.assertTrue(result.test_ok, result.test_output)
+        self.assertEqual(result.attempts, 2)
+        self.assertEqual(repair_calls["n"], 1)
+        self.assertTrue(log_exists)
+        self.assertTrue(entries)
+        self.assertEqual(entries[0].name, "sum-tool")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import os
 import threading
+import time
+from pathlib import Path
 
 import torch
 import tkinter as tk
@@ -15,7 +17,7 @@ from tkinter import messagebox, scrolledtext, simpledialog
 
 from app_config import grouped_specs, load_config, save_config
 from cognitive_regions import CognitiveSystem, start_rest_cycle_worker
-from llm_api_client import resolve_llm_chat_for_pipeline
+from llm_api_client import parse_assistant_message, resolve_llm_chat_for_pipeline
 
 from objective_agent_cycle import run_objective_pipeline
 from plastic_swarm_state import (
@@ -29,8 +31,16 @@ from persistent_memory import PersistentMemoryStore
 from skill_manager import SkillManager
 from task_runtime import TaskRuntime
 from tool_library import ToolLibrary
-from tool_creator import ToolCreator
+from tool_build_runtime import ToolBuildRuntime
+from tool_creator import ToolCreator, tool_creation_objective
 from unified_fly_memory import SharedFlyMemory
+
+
+def _new_chat_log_path() -> Path:
+    logs_dir = Path(__file__).resolve().parent / "data" / "chat_logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    return logs_dir / f"chat-log-{stamp}.md"
 
 
 def _role_tag(role: str) -> str:
@@ -142,6 +152,20 @@ def main() -> None:
     root.title("PlasticSwarm · objetivo + memoria")
     root.geometry("840x700")
     root.configure(bg="#1a1d24")
+    chat_log_path = _new_chat_log_path()
+    chat_log_path.write_text(
+        "\n".join(
+            [
+                "# PlasticSwarm chat log",
+                "",
+                f"- Inicio: {time.strftime('%Y-%m-%dT%H:%M:%S')}",
+                f"- LLM: {llm_backend_label}",
+                f"- Modelo: {llm_model_id}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     hdr = tk.Label(
         root,
@@ -199,15 +223,22 @@ def main() -> None:
         log.tag_configure(tag, foreground=fg)
 
     def append(tag: str, who: str, body: str) -> None:
+        text = body.rstrip()
         log.insert(tk.END, who + "\n", tag)
-        log.insert(tk.END, body.rstrip() + "\n\n", tag)
+        log.insert(tk.END, text + "\n\n", tag)
         log.see(tk.END)
+        try:
+            with chat_log_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"## {time.strftime('%H:%M:%S')} {who}\n\n{text}\n\n")
+        except OSError:
+            pass
 
     append(
         "s",
         "[Sistema]",
         f"Cargando pesos previos en segundo plano… Ejecutar cuando quieras.\n"
-        f"LLM: {llm_backend_label} · modelo «{llm_model_id}»",
+        f"LLM: {llm_backend_label} · modelo «{llm_model_id}»\n"
+        f"Chat-log: {chat_log_path}",
     )
 
     row = tk.Frame(root, bg="#1a1d24")
@@ -726,43 +757,99 @@ def main() -> None:
                 "Sistema",
                 "Creando nueva herramienta con el ciclo principal; se instalará como skill si las pruebas pasan.",
             )
-            creator = ToolCreator(skill_manager=skill_manager, tool_library=tool_library)
+            creator = ToolCreator(
+                skill_manager=skill_manager,
+                tool_library=tool_library,
+                on_log=emit,
+            )
             cycle_buf = CycleBuffer()
 
             def pipeline_runner(cycle_objective: str) -> tuple[str, int, float, bool]:
-                return run_objective_pipeline(
-                    cycle_objective,
-                    shared_mem,
-                    llm_model_id,
-                    llm_chat_fn,
-                    cycle_buffer=cycle_buf,
-                    plastic_aux=plastic_aux,
-                    experience_replay=experience_replay,
-                    tool_library=tool_library,
-                    skill_manager=skill_manager,
-                    persistent_memory=persistent_memory,
-                    cognitive_system=cognitive_system,
-                    task_runtime=task_runtime,
-                    autonomous_mode=bool(autonomous_var.get()),
-                    approval_callback=approve_tool_call,
-                    weights_ready=weights_ready,
-                    num_predict=args.num_predict,
-                    num_predict_final=max(args.num_predict_final, 1200),
-                    max_cycles=max(1, min(5, args.max_cycles)),
-                    n_discuss=max(1, min(3, args.discuss)),
-                    n_execute=max(1, min(3, args.execute)),
-                    n_test=max(1, min(2, args.test)),
-                    on_log=emit,
-                    on_cycle_checkpoint=lambda: store.save(shared_mem, plastic_aux),
+                forced_env = {
+                    "INTERNET_AGENT_ENABLED": "1",
+                    "PYTHON_TEST_AGENT_ENABLED": "1",
+                    "PYTHON_TEST_AGENT_SKIP_NON_CODE": "0",
+                    "NODE_TEST_AGENT_ENABLED": "1",
+                    "NODE_TEST_AGENT_SKIP_NON_CODE": "0",
+                }
+                previous_env = {key: os.environ.get(key) for key in forced_env}
+                os.environ.update(forced_env)
+                emit(
+                    "CrearHerramienta",
+                    "Agentes auxiliares forzados para este flujo: Internet=ON, PruebaPython=ON, PruebaNode=ON, skip_non_code=OFF.",
                 )
+                try:
+                    return run_objective_pipeline(
+                        cycle_objective,
+                        shared_mem,
+                        llm_model_id,
+                        llm_chat_fn,
+                        cycle_buffer=cycle_buf,
+                        plastic_aux=plastic_aux,
+                        experience_replay=experience_replay,
+                        tool_library=tool_library,
+                        skill_manager=skill_manager,
+                        persistent_memory=persistent_memory,
+                        cognitive_system=cognitive_system,
+                        task_runtime=task_runtime,
+                        internet_agent_enabled=True,
+                        python_test_agent_enabled=True,
+                        node_test_agent_enabled=True,
+                        terminal_agent_enabled=False,
+                        autonomous_mode=bool(autonomous_var.get()),
+                        approval_callback=approve_tool_call,
+                        weights_ready=weights_ready,
+                        num_predict=max(args.num_predict, 260),
+                        num_predict_final=max(args.num_predict_final, 1400),
+                        max_cycles=max(1, min(5, args.max_cycles)),
+                        n_discuss=max(1, min(3, args.discuss)),
+                        n_execute=max(1, min(3, args.execute)),
+                        n_test=max(1, min(2, args.test)),
+                        on_log=emit,
+                        on_cycle_checkpoint=lambda: store.save(shared_mem, plastic_aux),
+                    )
+                finally:
+                    for key, value in previous_env.items():
+                        if value is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = value
 
             def worker() -> None:
                 try:
-                    result = creator.create_with_main_cycle(
-                        objective.strip(),
-                        pipeline_runner=pipeline_runner,
+                    builder = ToolBuildRuntime(
+                        creator=creator,
+                        max_repair_attempts=3,
+                    )
+
+                    def repair_with_llm(prompt: str) -> str:
+                        resp = llm_chat_fn(
+                            llm_model_id,
+                            [
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "Eres un reparador de herramientas. Devuelve solo JSON valido "
+                                        "con codigo y pruebas corregidas."
+                                    ),
+                                },
+                                {"role": "user", "content": prompt},
+                            ],
+                            {"num_predict": 1600, "temperature": 0.2},
+                        )
+                        return parse_assistant_message(resp) or ""
+
+                    final_txt, cycles, _loss_v, reached = pipeline_runner(
+                        tool_creation_objective(objective.strip())
+                    )
+                    result = builder.build(
+                        user_objective=objective.strip(),
+                        initial_text=final_txt,
+                        cycles=cycles,
+                        reached=reached,
                         run_tests=run_tests,
                         timeout=test_timeout,
+                        repair_callback=repair_with_llm,
                     )
                 except Exception as exc:
                     root.after(0, lambda exc=exc: on_fail(exc))
@@ -777,6 +864,8 @@ def main() -> None:
                             f"Herramienta {status}: {result.name}\n"
                             f"Ruta: {result.skill_dir}\n"
                             f"Ciclos usados: {result.cycles}\n\n"
+                            f"Intentos de build: {result.attempts}\n"
+                            f"Build-log: {result.build_log_path or '-'}\n\n"
                             f"Pruebas:\n{result.test_output}"
                         ),
                     )
@@ -903,6 +992,13 @@ def main() -> None:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def show_chat_log_path() -> None:
+        messagebox.showinfo(
+            "Chat-log",
+            f"La conversación visible se está guardando en:\n{chat_log_path}",
+            parent=root,
+        )
+
     action_bar = tk.Frame(root, bg="#1a1d24")
     action_bar.pack(fill="x", padx=10, pady=(0, 8))
     tk.Label(
@@ -946,6 +1042,16 @@ def main() -> None:
         action_bar,
         text="Configurar sistema",
         command=open_config_window,
+        bg="#374151",
+        fg="white",
+        activebackground="#4b5563",
+        relief="flat",
+        padx=12,
+    ).pack(side="right", padx=(0, 8))
+    tk.Button(
+        action_bar,
+        text="Ver chat-log",
+        command=show_chat_log_path,
         bg="#374151",
         fg="white",
         activebackground="#4b5563",

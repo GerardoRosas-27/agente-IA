@@ -329,6 +329,18 @@ def is_node_probe_relevant(*parts: str) -> bool:
     return bool(_NODE_PROBE_RELEVANCE_RE.search(text))
 
 
+def first_code_block(text: str, languages: tuple[str, ...]) -> str:
+    lang_re = "|".join(re.escape(lang) for lang in languages if lang)
+    if lang_re:
+        pattern = rf"```(?:{lang_re})\s*(.*?)```"
+    else:
+        pattern = r"```\s*(.*?)```"
+    match = re.search(pattern, text or "", re.I | re.S)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
 _PROBE_BLOCKLIST = (
     r"\bimport\s+(os|subprocess|socket|shutil|pathlib|requests|urllib|http|ftplib|ssl)\b",
     r"\bfrom\s+(os|subprocess|socket|shutil|pathlib|requests|urllib|http|ftplib|ssl)\b",
@@ -623,6 +635,18 @@ def run_objective_pipeline(
         },
     )
     log("Runtime", f"task_id={task_id}\n{registry.context()[:1800]}")
+    hot_memory_ctx = ""
+    session_memory_ctx = ""
+    if memory_store is not None:
+        try:
+            hot_memory_ctx = memory_store.hot_context(max_chars=2400)
+            session_memory_ctx = memory_store.search_sessions(raw, limit=4, max_chars=1400)
+            log(
+                "MemoriaPersistente",
+                "\n\n".join([part for part in [hot_memory_ctx, session_memory_ctx] if part])[:3200],
+            )
+        except Exception as exc:
+            log("MemoriaPersistente", f"No se pudo cargar memoria persistente: {exc}")
     tool_preference_ctx = ""
     if tool_pref is not None:
         try:
@@ -659,18 +683,6 @@ def run_objective_pipeline(
             )
         except Exception as exc:
             log("CognitiveRegions", f"No se pudo consultar sistema cognitivo: {exc}")
-    hot_memory_ctx = ""
-    session_memory_ctx = ""
-    if memory_store is not None:
-        try:
-            hot_memory_ctx = memory_store.hot_context(max_chars=2400)
-            session_memory_ctx = memory_store.search_sessions(raw, limit=4, max_chars=1400)
-            log(
-                "MemoriaPersistente",
-                "\n\n".join([part for part in [hot_memory_ctx, session_memory_ctx] if part])[:3200],
-            )
-        except Exception as exc:
-            log("MemoriaPersistente", f"No se pudo cargar memoria persistente: {exc}")
     slot = 0
 
     def step_slot() -> int:
@@ -1005,7 +1017,48 @@ def run_objective_pipeline(
         python_probe_acc = ""
         if python_probe_enabled:
             log("Sistema", "── PruebaPython (script pequeño solo si hace falta) ──")
-            if probe_skip_non_code and not is_python_probe_relevant(
+            candidate_py = first_code_block(
+                "\n\n".join([out_p, execute_acc, test_acc]),
+                ("python", "py"),
+            )
+            if candidate_py:
+                probe_script = (
+                    "candidate_code = "
+                    + json.dumps(candidate_py[: min(len(candidate_py), probe_max_chars - 500)])
+                    + "\n"
+                    + "compile(candidate_code, 'candidate_tool.py', 'exec')\n"
+                    + "print('candidate_code_compiles=True')\n"
+                    + "print('candidate_chars=' + str(len(candidate_code)))\n"
+                )
+                try:
+                    run_result = registry.call(
+                        "probe.python",
+                        {
+                            "script": probe_script,
+                            "timeout": probe_timeout,
+                            "max_chars": probe_max_chars,
+                        },
+                        runtime=runtime,
+                        task_id=task_id,
+                    )
+                    python_probe_acc = (
+                        "Motivo: verificacion directa de codigo candidato entregado por el ciclo\n"
+                        f"Codigo candidato probado:\n{candidate_py[:1200]}\n\nResultado:\n{run_result}"
+                    )
+                    logb("PruebaPython", python_probe_acc)
+                    cycle_events.append(("PruebaPython", python_probe_acc))
+                    working_pool.add("PruebaPython", python_probe_acc, salience=0.84)
+                    mem_cur = _mem_step(memory, mem_cur, step_slot(), python_probe_acc)
+                    test_acc = (
+                        "\n---\n".join([test_acc, python_probe_acc])
+                        if test_acc
+                        else python_probe_acc
+                    )
+                except Exception as exc:
+                    if not auxiliary_fail_open:
+                        raise
+                    log("PruebaPython", f"Falló verificacion directa de codigo candidato: {exc}")
+            elif probe_skip_non_code and not is_python_probe_relevant(
                 obj_claro,
                 crit_txt,
                 out_p,
@@ -1076,7 +1129,44 @@ def run_objective_pipeline(
         node_probe_acc = ""
         if node_probe_enabled:
             log("Sistema", "── PruebaNode (script JavaScript pequeño solo si hace falta) ──")
-            if node_probe_skip_non_code and not is_node_probe_relevant(
+            candidate_js = first_code_block(
+                "\n\n".join([out_p, execute_acc, test_acc]),
+                ("javascript", "js", "node"),
+            )
+            if candidate_js:
+                probe_script = (
+                    candidate_js[: min(len(candidate_js), node_probe_max_chars - 80)]
+                    + "\nconsole.log('candidate_js_executed=true');\n"
+                )
+                try:
+                    run_result = registry.call(
+                        "probe.node",
+                        {
+                            "script": probe_script,
+                            "timeout": node_probe_timeout,
+                            "max_chars": node_probe_max_chars,
+                        },
+                        runtime=runtime,
+                        task_id=task_id,
+                    )
+                    node_probe_acc = (
+                        "Motivo: verificacion directa de codigo JavaScript candidato entregado por el ciclo\n"
+                        f"Codigo candidato probado:\n{candidate_js[:1200]}\n\nResultado:\n{run_result}"
+                    )
+                    logb("PruebaNode", node_probe_acc)
+                    cycle_events.append(("PruebaNode", node_probe_acc))
+                    working_pool.add("PruebaNode", node_probe_acc, salience=0.83)
+                    mem_cur = _mem_step(memory, mem_cur, step_slot(), node_probe_acc)
+                    test_acc = (
+                        "\n---\n".join([test_acc, node_probe_acc])
+                        if test_acc
+                        else node_probe_acc
+                    )
+                except Exception as exc:
+                    if not auxiliary_fail_open:
+                        raise
+                    log("PruebaNode", f"Falló verificacion directa de codigo candidato: {exc}")
+            elif node_probe_skip_non_code and not is_node_probe_relevant(
                 obj_claro,
                 crit_txt,
                 out_p,

@@ -21,11 +21,13 @@ from tool_library import ToolLibrary, ToolMemory
 
 
 _DANGEROUS_CODE_PATTERNS = (
-    r"\bimport\s+(os|subprocess|socket|shutil|requests|urllib|http|ftplib|ssl)\b",
-    r"\bfrom\s+(os|subprocess|socket|shutil|requests|urllib|http|ftplib|ssl)\b",
+    r"\bimport\s+(subprocess|ftplib)\b",
+    r"\bfrom\s+(subprocess|ftplib)\b",
+    r"\b(os\.system|os\.popen|shutil\.rmtree)\s*\(",
     r"\b(eval|exec|compile|input|__import__)\s*\(",
-    r"\b(open)\s*\(",
 )
+
+LogCallback = Callable[[str, str], None]
 
 
 @dataclass(frozen=True)
@@ -48,18 +50,29 @@ class InstalledToolResult:
     test_output: str
     cycles: int = 0
     reached: bool = False
+    attempts: int = 1
+    build_log_path: str = ""
 
 
 def tool_creation_objective(user_objective: str) -> str:
     objective = str(user_objective or "").strip()
     return (
         "Crea una nueva herramienta reutilizable para este sistema. "
-        "Debes disenar codigo Python pequeno, autocontenido y probado. "
-        "No uses red, archivos externos, secretos, subprocess, sockets, eval, exec ni input. "
+        "Debes disenar codigo Python funcional, instalado como modulo y probado. "
+        "NO sustituyas el pedido por una herramienta existente como project-tests. "
+        "NO respondas que no hace falta crearla: debes crear un modulo nuevo para el objetivo solicitado. "
+        "Ignora sesiones o memorias anteriores que impongan restricciones como 'sin red', "
+        "'sin archivos externos' o 'solo enlaces locales' si el usuario ahora pide una integracion real. "
+        "Puedes investigar por internet y puedes disenar integraciones reales cuando el objetivo lo requiera. "
+        "No incluyas secretos reales; usa parametros para tokens, URLs y credenciales. "
+        "Evita acciones destructivas y no uses subprocess, eval, exec ni input interactivo. "
         "La respuesta final debe ser SOLO JSON valido, sin markdown, con estas claves: "
         "name, description, triggers, code, test_code, instructions, risk. "
         "El campo code debe definir funciones reutilizables sin ejecutar trabajo al importarse. "
-        "El campo test_code debe usar unittest y validar al menos un caso normal y un caso borde. "
+        "El campo test_code debe usar unittest y validar casos reales sin depender de servicios externos vivos; "
+        "usa mocks cuando la herramienta sea de red. "
+        "Si el objetivo requiere WhatsApp, crea una herramienta que soporte enlaces wa.me/deep links "
+        "o WhatsApp Cloud API con token recibido por parametro y pruebas con mocks. "
         "Objetivo de la herramienta: "
         f"{objective}"
     )[:8000]
@@ -98,6 +111,10 @@ def _as_list(value: object) -> list[str]:
 
 def parse_generated_tool_spec(text: str) -> GeneratedToolSpec:
     data = _extract_json_object(text)
+    if not data.get("code") and not data.get("codigo"):
+        nested = data.get("respuesta_final") or data.get("response") or data.get("final")
+        if isinstance(nested, str) and nested.strip() != text.strip():
+            return parse_generated_tool_spec(nested)
     name = str(data.get("name", data.get("nombre", "")) or "").strip()
     code = str(data.get("code", data.get("codigo", "")) or "").strip()
     if not name:
@@ -114,6 +131,156 @@ def parse_generated_tool_spec(text: str) -> GeneratedToolSpec:
         instructions=str(data.get("instructions", data.get("instrucciones", "")) or "").strip(),
         risk=str(data.get("risk", "moderate") or "moderate").strip().lower(),
     )
+
+
+def _extract_labeled_value(text: str, *labels: str) -> str:
+    escaped = "|".join(re.escape(label) for label in labels)
+    pattern = rf"(?:\*\*)?(?:{escaped})(?:\*\*)?\s*:\s*(.+?)(?=\n\s*(?:\*\*)?[A-ZÁÉÍÓÚÑ_a-záéíóúñ -]+(?:\*\*)?\s*:|\Z)"
+    match = re.search(pattern, text, re.I | re.S)
+    return match.group(1).strip() if match else ""
+
+
+def parse_markdown_tool_spec(text: str) -> GeneratedToolSpec:
+    raw = str(text or "")
+    blocks = re.findall(r"```(?:python)?\s*(.*?)```", raw, flags=re.I | re.S)
+    code = blocks[0].strip() if blocks else ""
+    test_code = blocks[1].strip() if len(blocks) > 1 else ""
+    name = _extract_labeled_value(raw, "name", "nombre").strip()
+    description = _extract_labeled_value(raw, "description", "descripcion", "descripción").strip()
+    triggers_raw = _extract_labeled_value(raw, "triggers", "activadores").strip()
+    instructions = _extract_labeled_value(raw, "instructions", "instrucciones").strip()
+    risk = _extract_labeled_value(raw, "risk", "riesgo").strip().lower() or "moderate"
+    if not name or not code:
+        raise ValueError("No se pudo extraer una especificacion Markdown instalable.")
+    return GeneratedToolSpec(
+        name=name,
+        description=description,
+        triggers=_as_list(triggers_raw),
+        code=code,
+        test_code=test_code,
+        instructions=instructions,
+        risk=risk,
+    )
+
+
+def _is_whatsapp_request(text: str) -> bool:
+    return bool(re.search(r"\b(whatsapp|whats\s*app|wapsat|waptsap|wasap|guasap)\b", text, re.I))
+
+
+def _whatsapp_link_spec() -> GeneratedToolSpec:
+    code = r'''"""
+Herramienta local para preparar enlaces de WhatsApp.
+
+No llama a internet ni abre aplicaciones; solo normaliza telefonos y genera
+URLs/URI que otra capa puede abrir con aprobacion del usuario.
+"""
+
+
+def normalize_phone(phone, default_country_code=""):
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    country = "".join(ch for ch in str(default_country_code or "") if ch.isdigit())
+    if not digits:
+        raise ValueError("telefono vacio")
+    if country and len(digits) <= 10 and not digits.startswith(country):
+        digits = country + digits
+    if len(digits) < 8 or len(digits) > 15:
+        raise ValueError("telefono fuera de rango E.164")
+    return digits
+
+
+def _quote_text(text):
+    safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~"
+    out = []
+    for byte in str(text or "").encode("utf-8"):
+        ch = chr(byte)
+        out.append(ch if ch in safe else "%{:02X}".format(byte))
+    return "".join(out)
+
+
+def build_wa_me_url(phone, message="", default_country_code=""):
+    normalized = normalize_phone(phone, default_country_code)
+    url = "https://wa.me/" + normalized
+    if message:
+        url += "?text=" + _quote_text(message)
+    return url
+
+
+def build_whatsapp_deep_link(phone, message="", default_country_code=""):
+    normalized = normalize_phone(phone, default_country_code)
+    link = "whatsapp://send?phone=" + normalized
+    if message:
+        link += "&text=" + _quote_text(message)
+    return link
+
+
+def contact_payload(phone, message="", default_country_code=""):
+    return {
+        "phone": normalize_phone(phone, default_country_code),
+        "wa_me_url": build_wa_me_url(phone, message, default_country_code),
+        "deep_link": build_whatsapp_deep_link(phone, message, default_country_code),
+    }
+'''
+    test_code = r'''import unittest
+from tool import build_wa_me_url, build_whatsapp_deep_link, contact_payload, normalize_phone
+
+
+class TestWhatsAppLinkTool(unittest.TestCase):
+    def test_build_wa_me_url_with_message(self):
+        self.assertEqual(
+            build_wa_me_url("+52 55 1234 5678", "hola mundo"),
+            "https://wa.me/525512345678?text=hola%20mundo",
+        )
+
+    def test_default_country_code(self):
+        self.assertEqual(normalize_phone("5512345678", "52"), "525512345678")
+
+    def test_deep_link(self):
+        self.assertEqual(
+            build_whatsapp_deep_link("525512345678", "ok"),
+            "whatsapp://send?phone=525512345678&text=ok",
+        )
+
+    def test_payload_and_invalid_phone(self):
+        payload = contact_payload("525512345678")
+        self.assertIn("wa_me_url", payload)
+        with self.assertRaises(ValueError):
+            normalize_phone("")
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+    return GeneratedToolSpec(
+        name="whatsapp-link-tool",
+        description="Genera enlaces wa.me y whatsapp://send para iniciar conversaciones de WhatsApp sin usar red desde el modulo.",
+        triggers=["whatsapp", "waptsap", "wasap", "wa.me", "mensaje"],
+        code=code,
+        test_code=test_code,
+        instructions=(
+            "Importa build_wa_me_url, build_whatsapp_deep_link o contact_payload desde tool.py. "
+            "La herramienta no abre WhatsApp por si sola; devuelve enlaces listos para que la UI o el usuario los abra."
+        ),
+        risk="low",
+    )
+
+
+def fallback_tool_spec(user_objective: str) -> GeneratedToolSpec | None:
+    if _is_whatsapp_request(user_objective):
+        return _whatsapp_link_spec()
+    return None
+
+
+def _same_spec(a: GeneratedToolSpec, b: GeneratedToolSpec) -> bool:
+    return a.name == b.name and a.code == b.code and a.test_code == b.test_code
+
+
+def _spec_matches_objective(spec: GeneratedToolSpec, user_objective: str) -> bool:
+    if not _is_whatsapp_request(user_objective):
+        return True
+    haystack = "\n".join(
+        [spec.name, spec.description, " ".join(spec.triggers), spec.code, spec.instructions]
+    )
+    return bool(re.search(r"\b(whatsapp|wa\.me|whatsapp://|wasap|waptsap)\b", haystack, re.I))
 
 
 def _validate_python_code(code: str, *, label: str) -> None:
@@ -155,12 +322,15 @@ class ToolCreator:
         project_root: str | Path | None = None,
         skill_manager: SkillManager | None = None,
         tool_library: ToolLibrary | None = None,
+        on_log: LogCallback | None = None,
     ) -> None:
         self.project_root = Path(project_root or Path(__file__).resolve().parent)
         self.skill_manager = skill_manager or SkillManager(self.project_root / "skills")
         self.tool_library = tool_library
+        self.on_log = on_log or (lambda _role, _content: None)
 
     def install(self, spec: GeneratedToolSpec, *, run_tests: bool = True, timeout: float = 30.0) -> InstalledToolResult:
+        self.on_log("CrearHerramienta", f"Validando codigo generado para {spec.name}...")
         _validate_python_code(spec.code, label="tool.py")
         test_code = spec.test_code or _default_test_code()
         _validate_python_code(test_code, label="test_tool.py")
@@ -172,6 +342,7 @@ class ToolCreator:
         test_path = skill_dir / "test_tool.py"
         manifest_path = skill_dir / "manifest.json"
 
+        self.on_log("CrearHerramienta", f"Escribiendo modulo instalado en {skill_dir}...")
         tool_path.write_text(spec.code.rstrip() + "\n", encoding="utf-8")
         test_path.write_text(test_code.rstrip() + "\n", encoding="utf-8")
         (skill_dir / "__init__.py").write_text("", encoding="utf-8")
@@ -216,6 +387,7 @@ class ToolCreator:
         test_ok = True
         test_output = "Pruebas no ejecutadas."
         if run_tests:
+            self.on_log("CrearHerramienta", f"Ejecutando pruebas de {slug}...")
             proc = subprocess.run(
                 [
                     sys.executable,
@@ -240,8 +412,12 @@ class ToolCreator:
             if not test_ok:
                 manifest["status"] = "experimental"
                 manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+                self.on_log("CrearHerramienta", f"Pruebas fallidas; {slug} queda como experimental.\n{test_output[:1200]}")
+            else:
+                self.on_log("CrearHerramienta", f"Pruebas OK para {slug}.\n{test_output[:1200]}")
 
         if self.tool_library is not None and test_ok:
+            self.on_log("CrearHerramienta", f"Registrando {slug} en ToolLibrary para uso futuro...")
             self.tool_library.upsert(
                 ToolMemory(
                     name=slug,
@@ -271,9 +447,47 @@ class ToolCreator:
         run_tests: bool = True,
         timeout: float = 30.0,
     ) -> InstalledToolResult:
+        self.on_log("CrearHerramienta", "Ejecutando ciclo principal para disenar la herramienta nueva...")
         final_text, cycles, _loss, reached = pipeline_runner(tool_creation_objective(user_objective))
-        spec = parse_generated_tool_spec(final_text)
+        self.on_log("CrearHerramienta", f"Ciclo principal terminado: reached={reached}, ciclos={cycles}. Extrayendo especificacion...")
+        try:
+            spec = parse_generated_tool_spec(final_text)
+        except Exception as exc:
+            self.on_log("CrearHerramienta", f"El ciclo no entrego JSON instalable ({exc}); intentando extraer Markdown...")
+            try:
+                spec = parse_markdown_tool_spec(final_text)
+            except Exception as md_exc:
+                fallback = fallback_tool_spec(user_objective)
+                if fallback is None:
+                    raise ValueError(
+                        "El ciclo principal no produjo una herramienta instalable. "
+                        f"JSON: {exc}; Markdown: {md_exc}"
+                    ) from md_exc
+                self.on_log(
+                    "CrearHerramienta",
+                    "Usando plantilla segura de recuperacion para cumplir el objetivo solicitado.",
+                )
+                spec = fallback
+        if not _spec_matches_objective(spec, user_objective):
+            fallback = fallback_tool_spec(user_objective)
+            if fallback is None:
+                raise ValueError(
+                    f"La herramienta generada ({spec.name}) no corresponde al objetivo pedido."
+                )
+            self.on_log(
+                "CrearHerramienta",
+                f"El ciclo genero {spec.name}, que no corresponde al objetivo; usando herramienta especifica recuperada.",
+            )
+            spec = fallback
         installed = self.install(spec, run_tests=run_tests, timeout=timeout)
+        if run_tests and not installed.test_ok:
+            fallback = fallback_tool_spec(user_objective)
+            if fallback is not None and not _same_spec(spec, fallback):
+                self.on_log(
+                    "CrearHerramienta",
+                    "La primera herramienta fallo pruebas; reintentando con implementacion recuperada.",
+                )
+                installed = self.install(fallback, run_tests=run_tests, timeout=timeout)
         return InstalledToolResult(
             name=installed.name,
             skill_dir=installed.skill_dir,
@@ -282,4 +496,6 @@ class ToolCreator:
             test_output=installed.test_output,
             cycles=cycles,
             reached=reached,
+            attempts=installed.attempts,
+            build_log_path=installed.build_log_path,
         )

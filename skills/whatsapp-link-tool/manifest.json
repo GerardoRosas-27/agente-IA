@@ -1,0 +1,23 @@
+{
+  "name": "whatsapp-link-tool",
+  "version": "0.1.0",
+  "description": "Genera enlaces wa.me y whatsapp://send para iniciar conversaciones de WhatsApp sin usar red desde el modulo.",
+  "risk": "low",
+  "status": "validated",
+  "agent_enabled": true,
+  "agent_role": "AgenteSkill:whatsapp-link-tool",
+  "triggers": [
+    "whatsapp",
+    "waptsap",
+    "wasap",
+    "wa.me",
+    "mensaje"
+  ],
+  "permissions": [],
+  "entrypoint": "skills/whatsapp-link-tool/tool.py",
+  "executor": "",
+  "command": "",
+  "cwd": ".",
+  "instructions": "Importa build_wa_me_url, build_whatsapp_deep_link o contact_payload desde tool.py. La herramienta no abre WhatsApp por si sola; devuelve enlaces listos para que la UI o el usuario los abra.",
+  "created": "2026-04-29T10:17:27"
+}
