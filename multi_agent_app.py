@@ -903,8 +903,17 @@ def main() -> None:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    action_bar = tk.Frame(root, bg="#1a1d24")
+    action_bar.pack(fill="x", padx=10, pady=(0, 8))
+    tk.Label(
+        action_bar,
+        text="Acciones del sistema:",
+        bg="#1a1d24",
+        fg="#9ca3af",
+        font=("Segoe UI", 9),
+    ).pack(side="left", padx=(0, 8))
     tk.Button(
-        row,
+        action_bar,
         text="Ejecutar",
         command=on_run,
         bg="#6366f1",
@@ -914,7 +923,7 @@ def main() -> None:
         padx=12,
     ).pack(side="right")
     tk.Button(
-        row,
+        action_bar,
         text="Auditoría",
         command=open_audit_window,
         bg="#374151",
@@ -924,7 +933,7 @@ def main() -> None:
         padx=12,
     ).pack(side="right", padx=(0, 8))
     tk.Button(
-        row,
+        action_bar,
         text="Memoria",
         command=open_memory_window,
         bg="#374151",
@@ -934,8 +943,8 @@ def main() -> None:
         padx=12,
     ).pack(side="right", padx=(0, 8))
     tk.Button(
-        row,
-        text="Configuración",
+        action_bar,
+        text="Configurar sistema",
         command=open_config_window,
         bg="#374151",
         fg="white",
