@@ -1,0 +1,34 @@
+{
+  "project": "agenteIA-harness",
+  "description": "Harness multi-agente con LM Studio; orquestación líder / implementador / revisor.",
+  "rules": {
+    "one_feature_at_a_time": true,
+    "require_tests_to_close": true,
+    "valid_status": ["pending", "in_progress", "done", "blocked"]
+  },
+  "features": [
+    {
+      "id": 1,
+      "name": "document_harness_cli",
+      "title": "Documentar CLI del harness en README",
+      "description": "El README principal explica solo el flujo LM Studio + comandos harness.cli sin referencias legacy.",
+      "acceptance": [
+        "README.md describe python -m harness.cli (init, validate, status, run, expand)",
+        "No se documentan dependencias eliminadas (PyTorch, conectoma, Ollama como flujo principal)",
+        "Se menciona .env.example y variables LLM_API_BASE_URL / LLM_MODEL"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 2,
+      "name": "verdict_parser_tests",
+      "title": "Tests unitarios del parser VERDICT y de feature_store",
+      "description": "Cobertura mínima estable para reglas de una sola in_progress y parse_verdict.",
+      "acceptance": [
+        "tests/test_harness_feature_store.py valida guardado y reglas",
+        "tests/test_harness_orchestrator.py mockea invoke_llm y comprueba transiciones de estado"
+      ],
+      "status": "pending"
+    }
+  ]
+}
