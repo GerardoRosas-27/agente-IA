@@ -34,6 +34,105 @@
         "tests/test_harness_orchestrator.py mockea invoke_llm y comprueba transiciones de estado"
       ],
       "status": "done"
+    },
+    {
+      "id": 3,
+      "name": "whatsapp_qr_code_generation",
+      "title": "Generación de Código QR de WhatsApp",
+      "description": "Implementar la generación de un código QR dinámico utilizando la librería 'qrcode' para representar el enlace o número de contacto de WhatsApp.",
+      "acceptance": [
+        "Debe poder generar un código QR basado en un número telefónico y mensaje predefinido.",
+        "El código QR debe ser visible en la interfaz del usuario."
+      ],
+      "status": "done"
+    },
+    {
+      "id": 4,
+      "name": "whatsapp_web_connection",
+      "title": "Establecimiento de Conexión con WhatsApp Web",
+      "description": "Integrar la librería 'whatsapp-web.js' o una alternativa viable en Python para automatizar el proceso de conexión a WhatsApp (simulando un navegador headless).",
+      "acceptance": [
+        "El sistema debe inicializarse y esperar hasta que se pueda escanear el código QR.",
+        "Debe gestionar la sesión de manera persistente después del primer escaneo."
+      ],
+      "status": "done"
+    },
+    {
+      "id": 5,
+      "name": "qr_scan_handling",
+      "title": "Manejo y Captura del Escaneo QR",
+      "description": "Desarrollar la lógica para manejar el proceso de escaneo mediante un dispositivo externo (teléfono) utilizando el código QR generado, notificando al usuario cuando la conexión sea exitosa.",
+      "acceptance": [
+        "Debe detectar automáticamente el momento en que se ha completado el escaneo del QR.",
+        "Debe informar claramente si la conexión falla o expira."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 6,
+      "name": "send_message_via_whatsapp",
+      "title": "Función de Envío de Mensajes por WhatsApp",
+      "description": "Crear una función de utilidad que envíe mensajes de texto o archivos adjuntos a un contacto específico utilizando la conexión establecida en el paso 4.",
+      "acceptance": [
+        "Debe permitir enviar un mensaje simple con éxito al número configurado.",
+        "Debe manejar errores comunes como 'contacto no encontrado' o 'servicio caído'."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 7,
+      "name": "connection_initiation_page",
+      "title": "Página de inicio para conexión externa",
+      "description": "Crear una nueva interfaz o módulo dedicado exclusivamente al proceso de vinculación de cuentas mediante Wapshapt. Esta página debe actuar como el punto central de la herramienta.",
+      "acceptance": [
+        "El usuario debe poder acceder a la herramienta de conexión desde un menú principal visible.",
+        "La página debe guiar paso a paso el uso del QR y mostrar instrucciones claras."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 8,
+      "name": "generate_qr_code",
+      "title": "Generación y visualización dinámica de código QR",
+      "description": "Implementar la lógica backend para generar un código QR que codifique el enlace/payload específico requerido por Wapshapt. El código debe ser visible en la interfaz.",
+      "acceptance": [
+        "El sistema debe generar un QR funcional con el formato XYZ (ejemplo), verificando que el payload sea correcto.",
+        "El componente del QR debe estar optimizado para alta legibilidad."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 9,
+      "name": "wapshapt_callback_endpoint",
+      "title": "Endpoint de respuesta y validación de conexión",
+      "description": "Configurar un endpoint backend seguro que pueda recibir la notificación o el token de éxito/fallo después de que el usuario escanee el QR y Wapshapt complete la autenticación.",
+      "acceptance": [
+        "El sistema debe poder recibir y procesar exitosamente el callback de Wapshapt.",
+        "Al recibir el callback, se debe actualizar el estado interno del usuario y validar los datos recibidos."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 10,
+      "name": "user_instructions",
+      "title": "Instrucciones guiadas al usuario",
+      "description": "Implementar un bloque de texto informativo que explique detalladamente qué es Wapshapt, el procedimiento de escaneo y lo que debe esperar el usuario en la aplicación de origen.",
+      "acceptance": [
+        "Las instrucciones deben ser claras, concisas y adaptadas a diferentes escenarios (ej: conexión exitosa vs. error).",
+        "Se debe mostrar un botón o enlace para consultar ayuda adicional sobre el proceso."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 11,
+      "name": "connection_status_display",
+      "title": "Visualización del estado de la cuenta conectada",
+      "description": "Crear una sección dinámica que muestre al usuario en tiempo real el progreso o el resultado final del intento de conexión (ej: 'Pendiente', 'Conectando...', 'Éxito', 'Error').",
+      "acceptance": [
+        "El sistema debe cambiar visualmente el estado tras recibir cualquier respuesta del backend.",
+        "Debe mostrar mensajes de error específicos y accionables si la conexión falla."
+      ],
+      "status": "pending"
     }
   ]
 }

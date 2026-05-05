@@ -1,2 +1,3 @@
-requests>=2.31.0
-pytest>=8.0.0
+# ... otras dependencias
+playwright>=1.37.0 # Para automatización web y manejo de sesión
+pydantic # Ya existente o recomendado para tipado

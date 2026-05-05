@@ -103,19 +103,41 @@ def _get_in_progress(features: list[dict[str, Any]]) -> dict[str, Any] | None:
 def _apply_code_blocks(text: str) -> list[str]:
     import re
     # Busca bloques tipo ```python:ruta/archivo.py o ```ruta/archivo.py
-    pattern = r"```[a-zA-Z0-9]*:([^\s]+)\n(.*?)```"
-    matches = re.finditer(pattern, text, re.DOTALL)
+    # También busca bloques que solo tengan el nombre del archivo en la primera línea del bloque o justo antes
     saved_files = []
     root = Path(__file__).resolve().parent.parent
-    for m in matches:
-        rel_path = m.group(1).strip()
-        code = m.group(2)
-        full_path = (root / rel_path).resolve()
-        # Asegurar que está dentro del repo
-        if root in full_path.parents:
-            full_path.parent.mkdir(parents=True, exist_ok=True)
-            full_path.write_text(code, encoding="utf-8")
-            saved_files.append(rel_path)
+    
+    # Intento 1: Formato estricto ```python:ruta/archivo.py
+    pattern1 = r"```[a-zA-Z0-9]*:([^\s]+)\n(.*?)```"
+    matches1 = re.finditer(pattern1, text, re.DOTALL)
+    
+    # Intento 2: Formato relajado donde el archivo se menciona justo antes del bloque
+    # Ej: Archivo `src/whatsapp.py`:
+    # ```python
+    # ...
+    # ```
+    pattern2 = r"(?:Archivo|File|Crear|Modificar).*?`([a-zA-Z0-9_/\.\-]+)`.*?\n.*?```[a-zA-Z0-9]*\n(.*?)```"
+    matches2 = re.finditer(pattern2, text, re.DOTALL | re.IGNORECASE)
+    
+    all_matches = []
+    for m in matches1:
+        all_matches.append((m.group(1).strip(), m.group(2)))
+        
+    if not all_matches:
+        for m in matches2:
+            all_matches.append((m.group(1).strip(), m.group(2)))
+            
+    for rel_path, code in all_matches:
+        try:
+            full_path = (root / rel_path).resolve()
+            # Asegurar que está dentro del repo
+            if root in full_path.parents:
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                full_path.write_text(code, encoding="utf-8")
+                saved_files.append(rel_path)
+        except Exception:
+            pass
+            
     return saved_files
 
 

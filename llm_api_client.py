@@ -122,7 +122,6 @@ def _post_chat_completions(
     timeout: float,
     api_key: str,
 ) -> dict | None:
-    url = f"{base.rstrip('/')}/chat/completions"
     opts = options or {}
     env_default = (os.getenv("LLM_MAX_TOKENS") or "").strip()
 
@@ -150,16 +149,37 @@ def _post_chat_completions(
             return 512
 
     mt = _max_tokens_value()
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "stream": False,
-        "temperature": float(opts.get("temperature", 0.45)),
-    }
-    if mt < 0:
-        payload["max_tokens"] = -1
+    
+    # Soporte para el endpoint custom /api/v1/chat
+    is_custom_endpoint = base.endswith("/api/v1")
+    
+    if is_custom_endpoint:
+        url = f"{base}/chat"
+        system_prompt = ""
+        user_input = ""
+        for m in messages:
+            if m.get("role") == "system":
+                system_prompt += m.get("content", "") + "\n"
+            elif m.get("role") == "user":
+                user_input += m.get("content", "") + "\n"
+                
+        payload: dict[str, Any] = {
+            "model": model,
+            "system_prompt": system_prompt.strip(),
+            "input": user_input.strip()
+        }
     else:
-        payload["max_tokens"] = max(1, mt)
+        url = f"{base.rstrip('/')}/chat/completions"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "temperature": float(opts.get("temperature", 0.45)),
+        }
+        if mt < 0:
+            payload["max_tokens"] = -1
+        else:
+            payload["max_tokens"] = max(1, mt)
 
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -169,7 +189,40 @@ def _post_chat_completions(
         r = requests.post(url, json=payload, headers=headers, timeout=timeout)
         r.raise_for_status()
         data = r.json()
-    except (requests.RequestException, json.JSONDecodeError, ValueError):
+    except (requests.RequestException, json.JSONDecodeError, ValueError) as e:
+        print(f"Error de red o JSON: {e}")
+        return None
+
+    if is_custom_endpoint:
+        # Extraer texto de respuestas custom comunes
+        text = ""
+        if isinstance(data, dict):
+            # Formato específico de LM Studio /api/v1/chat
+            if "output" in data and isinstance(data["output"], list):
+                for item in data["output"]:
+                    if isinstance(item, dict) and item.get("type") == "message":
+                        text = item.get("content", "")
+                        break
+                if not text:
+                    for item in data["output"]:
+                        if isinstance(item, dict) and item.get("type") == "reasoning":
+                            text = item.get("content", "")
+                            break
+            elif "response" in data and isinstance(data["response"], str):
+                text = data["response"]
+            elif "content" in data and isinstance(data["content"], str):
+                text = data["content"]
+            elif "message" in data:
+                if isinstance(data["message"], str):
+                    text = data["message"]
+                elif isinstance(data["message"], dict):
+                    text = data["message"].get("content", "")
+            elif "choices" in data and len(data["choices"]) > 0:
+                msg = (data["choices"][0] or {}).get("message") or {}
+                text = msg.get("content", "")
+        
+        if text:
+            return {"message": {"role": "assistant", "content": str(text).strip()}}
         return None
 
     try:

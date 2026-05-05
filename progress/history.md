@@ -11,3 +11,23 @@
 ## [2026-05-05T09:15:24] Entrada
 
 - **2026-05-05T09:15:24** feature `verdict_parser_tests` (id=2) → **DONE**. Ver `impl_verdict_parser_tests.md` y `review_verdict_parser_tests.md`.
+
+
+## [2026-05-05T16:45:59] Entrada
+
+- **2026-05-05T16:45:59** inicializador: +4 features desde objetivo de usuario.
+
+
+## [2026-05-05T16:47:15] Entrada
+
+- **2026-05-05T16:47:15** inicializador: +5 features desde objetivo de usuario.
+
+
+## [2026-05-05T16:49:53] Entrada
+
+- **2026-05-05T16:49:53** feature `whatsapp_qr_code_generation` (id=3) → **DONE**. Ver `impl_whatsapp_qr_code_generation.md` y `review_whatsapp_qr_code_generation.md`.
+
+
+## [2026-05-05T16:53:29] Entrada
+
+- **2026-05-05T16:53:29** feature `whatsapp_web_connection` (id=4) → **DONE**. Ver `impl_whatsapp_web_connection.md` y `review_whatsapp_web_connection.md`.
