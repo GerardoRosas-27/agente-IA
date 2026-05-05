@@ -75,6 +75,7 @@ class TestRunOneFeatureCycle(unittest.TestCase):
             patch.object(orchestrator, "CHECKPOINTS_MD", self.tmp / "CHECKPOINTS.md"),
             patch.object(orchestrator, "DOCS_DIR", self.tmp / "docs"),
             patch.object(orchestrator, "invoke_llm", self._fake_invoke),
+            patch.object(orchestrator, "_run_tests", return_value="tests ok"),
         ):
             res = orchestrator.run_one_feature_cycle(model="m")
 

@@ -61,7 +61,12 @@ def implementer_user_message(
     leader_plan: str,
     architecture_excerpt: str,
     conventions_excerpt: str,
+    previous_feedback: str | None = None,
 ) -> str:
+    feedback_section = ""
+    if previous_feedback:
+        feedback_section = f"\n--- Feedback de intento anterior ---\n{previous_feedback}\n\nCorrige tu implementación basándote en este feedback.\n"
+
     return f"""Documentación (extractos):
 
 --- docs/architecture.md ---
@@ -75,7 +80,7 @@ def implementer_user_message(
 
 --- Plan del líder ---
 {leader_plan}
-
+{feedback_section}
 Redacta el informe de implementación para esta única feature."""
 
 
@@ -85,6 +90,7 @@ def reviewer_user_message(
     impl_report: str,
     verification_excerpt: str,
     checkpoints_excerpt: str,
+    test_output: str,
 ) -> str:
     return f"""--- docs/verification.md ---
 {verification_excerpt}
@@ -97,6 +103,9 @@ def reviewer_user_message(
 
 --- Informe del implementador ---
 {impl_report}
+
+--- Salida de los tests automatizados ---
+{test_output}
 
 Evalúa. Primera línea: VERDICT: PASS o VERDICT: FAIL."""
 

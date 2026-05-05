@@ -74,13 +74,13 @@ def main() -> None:
                     on_log=emit,
                 )
             except Exception as exc:
-                root.after(
-                    0,
-                    lambda: (
-                        append(f"ERROR: {exc}"),
-                        messagebox.showerror("Harness", str(exc)),
-                    ),
-                )
+                err_msg = str(exc)
+
+                def show_err(e: str = err_msg) -> None:
+                    append(f"ERROR: {e}")
+                    messagebox.showerror("Harness", e)
+
+                root.after(0, show_err)
                 busy["v"] = False
                 return
 

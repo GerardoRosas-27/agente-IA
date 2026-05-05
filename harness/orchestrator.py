@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -98,12 +100,25 @@ def _get_in_progress(features: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
+def _run_tests() -> str:
+    """Ejecuta los tests del proyecto y devuelve el output."""
+    root = Path(__file__).resolve().parent.parent
+    cmd = [sys.executable, "-m", "pytest", "tests/", "-q", "--tb=short"]
+    try:
+        r = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=60)
+        out = r.stdout + "\n" + r.stderr
+        return f"Exit code: {r.returncode}\n{out.strip()}"
+    except Exception as e:
+        return f"Error ejecutando tests: {e}"
+
+
 def run_one_feature_cycle(
     *,
     model: str,
     llm_chat: Callable[..., Any] | None = None,
     num_predict_leader: int = 1200,
     num_predict_worker: int = 2800,
+    max_retries: int = 2,
     on_log: Callable[[str], None] | None = None,
 ) -> HarnessCycleResult | None:
     """
@@ -149,48 +164,70 @@ def run_one_feature_cycle(
         ),
         llm_chat=llm_chat,
         num_predict=num_predict_leader,
+        role_hint="leader",
     )
     _append_markdown(PROGRESS_DIR / "current.md", f"Líder · feature {fid}", leader_out)
 
-    log("Implementador: redactando informe…")
-    impl_body = invoke_llm(
-        model,
-        prompts.IMPLEMENTER_SYSTEM,
-        prompts.implementer_user_message(
-            feature_block=fblock,
-            leader_plan=leader_out,
-            architecture_excerpt=arch_x,
-            conventions_excerpt=conv_x,
-        ),
-        llm_chat=llm_chat,
-        num_predict=num_predict_worker,
-    )
+    verdict = None
+    previous_feedback = None
     impl_path = PROGRESS_DIR / f"impl_{slug}.md"
-    impl_path.write_text(
-        f"# Implementación · {feat.get('title')}\n\n{impl_body}\n",
-        encoding="utf-8",
-    )
-
-    log("Revisor: evaluando…")
-    review_body = invoke_llm(
-        model,
-        prompts.REVIEWER_SYSTEM,
-        prompts.reviewer_user_message(
-            feature_block=fblock,
-            impl_report=impl_body,
-            verification_excerpt=ver_x,
-            checkpoints_excerpt=cp_x,
-        ),
-        llm_chat=llm_chat,
-        num_predict=num_predict_leader,
-    )
     review_path = PROGRESS_DIR / f"review_{slug}.md"
-    review_path.write_text(
-        f"# Revisión · {feat.get('title')}\n\n{review_body}\n",
-        encoding="utf-8",
-    )
+    impl_body = ""
+    review_body = ""
 
-    verdict = parse_verdict(review_body)
+    for attempt in range(max_retries + 1):
+        log(f"Implementador: redactando informe (intento {attempt + 1}/{max_retries + 1})…")
+        impl_body = invoke_llm(
+            model,
+            prompts.IMPLEMENTER_SYSTEM,
+            prompts.implementer_user_message(
+                feature_block=fblock,
+                leader_plan=leader_out,
+                architecture_excerpt=arch_x,
+                conventions_excerpt=conv_x,
+                previous_feedback=previous_feedback,
+            ),
+            llm_chat=llm_chat,
+            num_predict=num_predict_worker,
+            role_hint=f"implementer_attempt_{attempt + 1}",
+        )
+        impl_path.write_text(
+            f"# Implementación · {feat.get('title')} (Intento {attempt + 1})\n\n{impl_body}\n",
+            encoding="utf-8",
+        )
+
+        log("Ejecutando tests automatizados…")
+        test_output = _run_tests()
+        log(f"Tests finalizados. Longitud del output: {len(test_output)} caracteres.")
+
+        log("Revisor: evaluando…")
+        review_body = invoke_llm(
+            model,
+            prompts.REVIEWER_SYSTEM,
+            prompts.reviewer_user_message(
+                feature_block=fblock,
+                impl_report=impl_body,
+                verification_excerpt=ver_x,
+                checkpoints_excerpt=cp_x,
+                test_output=test_output,
+            ),
+            llm_chat=llm_chat,
+            num_predict=num_predict_leader,
+            role_hint=f"reviewer_attempt_{attempt + 1}",
+        )
+        review_path.write_text(
+            f"# Revisión · {feat.get('title')} (Intento {attempt + 1})\n\n{review_body}\n\n## Output de Tests\n```text\n{test_output}\n```\n",
+            encoding="utf-8",
+        )
+
+        verdict = parse_verdict(review_body)
+        if verdict is True:
+            break
+        else:
+            previous_feedback = review_body
+            if attempt < max_retries:
+                log("El revisor rechazó la implementación. Reintentando…")
+
     data = load_feature_list(FEATURE_LIST_PATH)
     if verdict is True:
         set_feature_status(data, fid, "done")
@@ -263,6 +300,7 @@ def expand_features_from_goal(
         llm_chat=llm_chat,
         num_predict=num_predict,
         temperature=0.4,
+        role_hint="initializer",
     )
     cleaned = raw.strip()
     if cleaned.startswith("```"):

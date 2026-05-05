@@ -4,7 +4,12 @@
   "rules": {
     "one_feature_at_a_time": true,
     "require_tests_to_close": true,
-    "valid_status": ["pending", "in_progress", "done", "blocked"]
+    "valid_status": [
+      "pending",
+      "in_progress",
+      "done",
+      "blocked"
+    ]
   },
   "features": [
     {
@@ -17,7 +22,7 @@
         "No se documentan dependencias eliminadas (PyTorch, conectoma, Ollama como flujo principal)",
         "Se menciona .env.example y variables LLM_API_BASE_URL / LLM_MODEL"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 2,

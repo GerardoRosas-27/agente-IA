@@ -4,13 +4,26 @@ from __future__ import annotations
 import hashlib
 import threading
 from collections import OrderedDict
+from datetime import datetime
 from typing import Any, Callable
 
 from llm_api_client import parse_assistant_message, remote_openai_chat
+from harness.paths import LOGS_DIR
 
 _LLM_CACHE_MAX = 64
 _LLM_CACHE: OrderedDict[str, str] = OrderedDict()
 _LLM_CACHE_LOCK = threading.Lock()
+
+
+def _log_interaction(model: str, system: str, user: str, response: str, role_hint: str = "llm") -> None:
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    log_file = LOGS_DIR / f"{stamp}_{role_hint}.md"
+    content = f"# LLM Interaction Log\n\n**Model**: {model}\n**Date**: {stamp}\n\n"
+    content += f"## System Prompt\n\n```text\n{system}\n```\n\n"
+    content += f"## User Prompt\n\n```text\n{user}\n```\n\n"
+    content += f"## Response\n\n```text\n{response}\n```\n"
+    log_file.write_text(content, encoding="utf-8")
 
 
 def invoke_llm(
@@ -22,6 +35,7 @@ def invoke_llm(
     num_predict: int = 2048,
     temperature: float = 0.35,
     use_cache: bool = False,
+    role_hint: str = "llm",
 ) -> str:
     """
     Una vuelta chat completions. Por defecto `remote_openai_chat` (LM Studio).
@@ -59,4 +73,6 @@ def invoke_llm(
             _LLM_CACHE.move_to_end(cache_key)
             while len(_LLM_CACHE) > _LLM_CACHE_MAX:
                 _LLM_CACHE.popitem(last=False)
+    
+    _log_interaction(model, system, user, out, role_hint)
     return out

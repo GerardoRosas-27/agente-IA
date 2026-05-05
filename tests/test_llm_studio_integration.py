@@ -57,7 +57,7 @@ class TestLMStudioOpenAICompatible(unittest.TestCase):
         self.assertTrue(choices)
         content = (choices[0].get("message") or {}).get("content")
         self.assertIsInstance(content, str)
-        self.assertTrue(content.strip())
+        self.assertTrue(str(content).strip())
 
 
 if __name__ == "__main__":

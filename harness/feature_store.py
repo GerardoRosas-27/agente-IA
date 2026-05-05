@@ -60,7 +60,10 @@ def pick_next_pending(features: list[dict[str, Any]]) -> dict[str, Any] | None:
 
     def sort_key(item: dict[str, Any]) -> tuple[int, int]:
         try:
-            return (0, int(item.get("id")))
+            val = item.get("id")
+            if val is None:
+                return (1, 0)
+            return (0, int(val))
         except (TypeError, ValueError):
             return (1, 0)
 
@@ -69,8 +72,10 @@ def pick_next_pending(features: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 def feature_by_id(features: list[dict[str, Any]], fid: int) -> dict[str, Any] | None:
     for f in features:
-        if isinstance(f, dict) and int(f.get("id") or -1) == fid:
-            return f
+        if isinstance(f, dict):
+            val = f.get("id")
+            if val is not None and int(val) == fid:
+                return f
     return None
 
 
@@ -80,7 +85,9 @@ def set_feature_status(
     if status not in VALID_STATUS:
         return False
     for f in data.get("features") or []:
-        if isinstance(f, dict) and int(f.get("id") or -1) == fid:
-            f["status"] = status
-            return True
+        if isinstance(f, dict):
+            val = f.get("id")
+            if val is not None and int(val) == fid:
+                f["status"] = status
+                return True
     return False
