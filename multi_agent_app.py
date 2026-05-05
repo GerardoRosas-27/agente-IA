@@ -21,23 +21,37 @@ def main() -> None:
 
     from llm_api_client import resolve_llm_chat_for_pipeline
 
-    from harness.orchestrator import run_one_feature_cycle
+    from harness.orchestrator import run_one_feature_cycle, expand_features_from_goal
 
     llm_chat, model_id, label = resolve_llm_chat_for_pipeline("")
 
     root = tk.Tk()
     root.title("Harness LM Studio · líder → implementador → revisor")
-    root.geometry("820x560")
+    root.geometry("820x600")
     root.configure(bg="#1a1d24")
 
     tk.Label(
         root,
-        text=f"{label} · modelo «{model_id}»\nUn ciclo procesa la siguiente feature en feature_list.json (ver AGENTS.md).",
+        text=f"{label} · modelo «{model_id}»\nEscribe un objetivo para añadirlo y ejecutarlo, o déjalo en blanco para procesar la siguiente feature pendiente.",
         bg="#1a1d24",
         fg="#c8d0e0",
         font=("Segoe UI", 10),
         justify="left",
     ).pack(fill="x", padx=10, pady=8)
+
+    input_frame = tk.Frame(root, bg="#1a1d24")
+    input_frame.pack(fill="x", padx=10, pady=(0, 8))
+    
+    tk.Label(input_frame, text="Objetivo:", bg="#1a1d24", fg="#9ca3af", font=("Segoe UI", 10)).pack(side="left", padx=(0, 6))
+    goal_entry = tk.Entry(
+        input_frame,
+        font=("Segoe UI", 10),
+        bg="#252936",
+        fg="#f3f4f6",
+        insertbackground="#f3f4f6",
+        relief="flat",
+    )
+    goal_entry.pack(side="left", fill="x", expand=True)
 
     log = scrolledtext.ScrolledText(
         root,
@@ -64,9 +78,20 @@ def main() -> None:
 
         def worker() -> None:
             try:
-
                 def emit(m: str) -> None:
                     root.after(0, lambda: append(m))
+
+                goal = goal_entry.get().strip()
+                if goal:
+                    emit(f"Expandiendo objetivo: {goal}")
+                    added = expand_features_from_goal(
+                        user_goal=goal,
+                        model=model_id,
+                        llm_chat=llm_chat,
+                    )
+                    emit(f"Se añadieron {added} nuevas features a la lista.")
+                    # Limpiar el input para que el próximo clic solo avance el ciclo
+                    root.after(0, lambda: goal_entry.delete(0, tk.END))
 
                 res = run_one_feature_cycle(
                     model=model_id,

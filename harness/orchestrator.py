@@ -100,6 +100,25 @@ def _get_in_progress(features: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
+def _apply_code_blocks(text: str) -> list[str]:
+    import re
+    # Busca bloques tipo ```python:ruta/archivo.py o ```ruta/archivo.py
+    pattern = r"```[a-zA-Z0-9]*:([^\s]+)\n(.*?)```"
+    matches = re.finditer(pattern, text, re.DOTALL)
+    saved_files = []
+    root = Path(__file__).resolve().parent.parent
+    for m in matches:
+        rel_path = m.group(1).strip()
+        code = m.group(2)
+        full_path = (root / rel_path).resolve()
+        # Asegurar que está dentro del repo
+        if root in full_path.parents:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            full_path.write_text(code, encoding="utf-8")
+            saved_files.append(rel_path)
+    return saved_files
+
+
 def _run_tests() -> str:
     """Ejecuta los tests del proyecto y devuelve el output."""
     root = Path(__file__).resolve().parent.parent
@@ -195,6 +214,13 @@ def run_one_feature_cycle(
             f"# Implementación · {feat.get('title')} (Intento {attempt + 1})\n\n{impl_body}\n",
             encoding="utf-8",
         )
+
+        log("Aplicando cambios al sistema de archivos...")
+        saved_files = _apply_code_blocks(impl_body)
+        if saved_files:
+            log(f"Archivos creados/modificados: {', '.join(saved_files)}")
+        else:
+            log("No se detectaron bloques de código para guardar.")
 
         log("Ejecutando tests automatizados…")
         test_output = _run_tests()

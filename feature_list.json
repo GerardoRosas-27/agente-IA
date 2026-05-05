@@ -33,7 +33,7 @@
         "tests/test_harness_feature_store.py valida guardado y reglas",
         "tests/test_harness_orchestrator.py mockea invoke_llm y comprueba transiciones de estado"
       ],
-      "status": "pending"
+      "status": "done"
     }
   ]
 }
