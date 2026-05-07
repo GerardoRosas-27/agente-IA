@@ -141,6 +141,24 @@ def _apply_code_blocks(text: str) -> list[str]:
     return saved_files
 
 
+def _run_bash_blocks(text: str, log: Callable[[str], None]) -> None:
+    import re
+    root = Path(__file__).resolve().parent.parent
+    pattern = r"```bash\n(.*?)```"
+    matches = re.finditer(pattern, text, re.DOTALL)
+    for m in matches:
+        cmd_str = m.group(1).strip()
+        if not cmd_str:
+            continue
+        log(f"Ejecutando dependencias/comandos bash:\n{cmd_str}")
+        try:
+            cmd = ["cmd", "/c", cmd_str] if sys.platform == "win32" else ["bash", "-c", cmd_str]
+            r = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=180)
+            log(f"Salida bash (Exit {r.returncode}):\n{r.stdout}\n{r.stderr}")
+        except Exception as e:
+            log(f"Error ejecutando bash: {e}")
+
+
 def _run_tests() -> str:
     """Ejecuta los tests del proyecto y devuelve el output."""
     root = Path(__file__).resolve().parent.parent
@@ -244,6 +262,8 @@ def run_one_feature_cycle(
         else:
             log("No se detectaron bloques de código para guardar.")
 
+        _run_bash_blocks(impl_body, log)
+
         log("Ejecutando tests automatizados…")
         test_output = _run_tests()
         log(f"Tests finalizados. Longitud del output: {len(test_output)} caracteres.")
@@ -341,22 +361,36 @@ def expand_features_from_goal(
             except (TypeError, ValueError):
                 pass
 
-    raw = invoke_llm(
-        model,
-        prompts.INIT_EXPAND_SYSTEM,
-        prompts.initializer_user_message(user_goal=user_goal, max_existing_id=max_id),
-        llm_chat=llm_chat,
-        num_predict=num_predict,
-        temperature=0.4,
-        role_hint="initializer",
-    )
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I).strip()
-        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
-    new_items = json.loads(cleaned)
-    if not isinstance(new_items, list):
-        raise ValueError("El inicializador no devolvió un array JSON.")
+    new_items = None
+    last_error = None
+    
+    for attempt in range(3):
+        raw = invoke_llm(
+            model,
+            prompts.INIT_EXPAND_SYSTEM,
+            prompts.initializer_user_message(user_goal=user_goal, max_existing_id=max_id),
+            llm_chat=llm_chat,
+            num_predict=num_predict,
+            temperature=0.4,
+            role_hint=f"initializer_attempt_{attempt + 1}",
+        )
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I).strip()
+            cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+            
+        try:
+            new_items = json.loads(cleaned)
+            if not isinstance(new_items, list):
+                raise ValueError("El inicializador no devolvió un array JSON.")
+            break  # Parseo exitoso
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = e
+            print(f"Advertencia: Fallo al parsear JSON del inicializador (intento {attempt + 1}/3): {e}")
+            new_items = None
+
+    if new_items is None or not isinstance(new_items, list):
+        raise ValueError(f"El inicializador falló tras 3 intentos. Último error: {last_error}\nTexto devuelto:\n{cleaned[:200]}...")
 
     added = 0
     next_id = max_id + 1

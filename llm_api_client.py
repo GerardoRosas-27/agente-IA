@@ -15,7 +15,7 @@ from typing import Any, Callable
 import requests
 
 # LM Studio (misma red que el PC con el servidor; cambia en .env si aplica)
-DEFAULT_LLM_API_BASE_URL = "http://192.168.0.13:1234/v1"
+DEFAULT_LLM_API_BASE_URL = "http://192.168.0.4:1234/v1"
 DEFAULT_LLM_MODEL = "xiaomi-mimo-vl-miloco-7b"
 
 _ENV_LOADED = False

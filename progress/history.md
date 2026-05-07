@@ -31,3 +31,23 @@
 ## [2026-05-05T16:53:29] Entrada
 
 - **2026-05-05T16:53:29** feature `whatsapp_web_connection` (id=4) → **DONE**. Ver `impl_whatsapp_web_connection.md` y `review_whatsapp_web_connection.md`.
+
+
+## [2026-05-07T09:23:06] Entrada
+
+- **2026-05-07T09:23:06** inicializador: +5 features desde objetivo de usuario.
+
+
+## [2026-05-07T09:27:21] Entrada
+
+- **2026-05-07T09:27:21** feature `qr_scan_handling` (id=5) → **FAIL** (pending de nuevo). Motivo en `review_qr_scan_handling.md`.
+
+
+## [2026-05-07T09:46:43] Entrada
+
+- **2026-05-07T09:46:43** inicializador: +3 features desde objetivo de usuario.
+
+
+## [2026-05-07T12:49:55] Entrada
+
+- **2026-05-07T12:49:55** feature `qr_scan_handling` (id=5) → **FAIL** (pending de nuevo). Motivo en `review_qr_scan_handling.md`.

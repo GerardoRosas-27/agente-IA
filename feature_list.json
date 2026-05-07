@@ -66,7 +66,7 @@
         "Debe detectar automáticamente el momento en que se ha completado el escaneo del QR.",
         "Debe informar claramente si la conexión falla o expira."
       ],
-      "status": "pending"
+      "status": "in_progress"
     },
     {
       "id": 6,
@@ -131,6 +131,109 @@
       "acceptance": [
         "El sistema debe cambiar visualmente el estado tras recibir cualquier respuesta del backend.",
         "Debe mostrar mensajes de error específicos y accionables si la conexión falla."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 12,
+      "name": "generate_whatsapp_qr",
+      "title": "Generación y visualización del código QR de WhatsApp",
+      "description": "Implementar la lógica para interactuar con la API de WhatsApp (o librería simulada) que devuelva el código QR necesario para iniciar sesión. Debe mostrarse en un componente visible de la interfaz.",
+      "acceptance": [
+        "El sistema debe generar un QR único al iniciar la conexión.",
+        "El QR generado debe ser escaneable por cualquier aplicación cliente oficial de WhatsApp."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 13,
+      "name": "monitor_connection_state",
+      "title": "Monitorización y gestión del estado de la sesión",
+      "description": "Crear un servicio que monitoree el estado actual de la conexión (Conectando, Conectado, Desconectado) y notifique cambios al usuario en tiempo real.",
+      "acceptance": [
+        "La UI debe actualizarse visualmente (ej. cambiando color o texto) según el estado reportado (e.g., 'Online'/'Offline').",
+        "Debe existir un mecanismo de detección automática de desconexión sin intervención del usuario."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 14,
+      "name": "process_whatsapp_login_data",
+      "title": "Procesamiento seguro de la información de inicio de sesión",
+      "description": "Desarrollar el endpoint o función backend que recibe y valida los datos obtenidos tras el escaneo del QR (token/hashes) para establecer una sesión persistente.",
+      "acceptance": [
+        "El sistema debe validar correctamente los tokens recibidos contra las credenciales de WhatsApp.",
+        "Debe gestionar los errores de autenticación (ej. 'Token inválido', 'Cuenta suspendida')."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 15,
+      "name": "send_message_whatsapp",
+      "title": "Funcionalidad principal de envío de mensajes",
+      "description": "Permitir al usuario enviar mensajes de texto individuales a un contacto o grupo específico utilizando la sesión activa. Debe incluir validación de destinatario.",
+      "acceptance": [
+        "El mensaje enviado debe ser visible inmediatamente en el historial simulado.",
+        "El sistema debe confirmar el éxito del envío (ej. 'Mensaje enviado exitosamente')."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 16,
+      "name": "handle_session_expiration",
+      "title": "Gestión de expiración y re-autenticación de la sesión",
+      "description": "Implementar lógica que detecte cuándo una sesión ha caducado o se ha desconectado por motivos externos (ej. actualización de WhatsApp). Debe guiar al usuario para reiniciar el proceso con un nuevo QR.",
+      "acceptance": [
+        "Al detectar expiración, debe mostrar una alerta crítica e impedir funcionalidades hasta completar la re-conexión.",
+        "El flujo de re-autenticación debe ser lo más sencillo posible para el usuario final."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 17,
+      "name": "whatsapp_login_qr",
+      "title": "Generación de código QR para conexión de WhatsApp",
+      "description": "Implementar un mecanismo que muestre o genere un Código QR específico para autenticar la cuenta de WhatsApp del usuario dentro de la herramienta. Este QR debe ser escaneable por el móvil oficial de WhatsApp.",
+      "acceptance": [
+        "El sistema debe generar un QR único y funcional en la interfaz.",
+        "Al escanear el QR con el dispositivo móvil, se inicia el proceso de conexión a la API o librería elegida.",
+        "El estado de autenticación debe reflejar 'Pendiente' hasta que se complete el escaneo."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 18,
+      "name": "whatsapp_library_selection",
+      "title": "Selección e integración de librería de WhatsApp",
+      "description": "Evaluar y seleccionar la librería o API adecuada (ej. WhatsApp Business API, o una solución basada en web scraping/automación que simule la conexión) para manejar la sesión de WhatsApp.",
+      "acceptance": [
+        "Se debe documentar la elección técnica (librería/API) con justificación.",
+        "Debe existir un módulo inicializador capaz de gestionar la conexión mediante el método QR seleccionado.",
+        "La implementación debe ser lo más estable posible frente a cambios en las políticas de WhatsApp."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 19,
+      "name": "account_connection_flow",
+      "title": "Flujo completo de conexión y manejo de errores",
+      "description": "Diseñar e implementar el flujo de usuario que guía desde la inicialización hasta la conexión exitosa o fallida. Debe incluir pasos para manejar credenciales y posibles bloqueos de cuenta.",
+      "acceptance": [
+        "El flujo debe guiar paso a paso al usuario (Generación QR -> Escaneo -> Confirmación).",
+        "Se deben manejar estados de error específicos (ej. 'Cuenta bloqueada', 'QR inválido').",
+        "La conexión exitosa debe registrar la sesión activa en el sistema."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 20,
+      "name": "whatsapp_integration_qr_tool",
+      "title": "Crear herramienta de conexión de WhatsApp con QR real",
+      "description": "Instalar una librería real (como pywhatkit o whatsapp-web.js equivalente en Python) para mostrar un QR en pantalla y conectar la sesión de WhatsApp.",
+      "acceptance": [
+        "Se instaló la librería usando un bloque bash.",
+        "La herramienta final se guardó en skills/whatsapp_connector.py.",
+        "Se definieron pruebas reales en tests/test_whatsapp.py para verificar que la librería se importa y se puede generar un QR."
       ],
       "status": "pending"
     }
