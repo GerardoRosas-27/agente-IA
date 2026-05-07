@@ -14,6 +14,9 @@ from tkinter import ttk
 
 from harness.feature_store import load_feature_list
 from harness.paths import FEATURE_LIST_PATH
+from harness.skill_registry import is_skill_enabled, set_skill_enabled, sync_skills
+from harness.skill_runtime import get_runtime_status
+from skills.whatsapp_connector import handle_input_command, parse_whatsapp_command
 
 
 def main() -> None:
@@ -59,6 +62,14 @@ def main() -> None:
 
     # --- LISTA DE TAREAS ---
     tk.Label(root, text="Tareas en el sistema:", bg="#1a1d24", fg="#c8d0e0", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 0))
+    progress_var = tk.StringVar(value="Estado: listo para trabajar.")
+    tk.Label(
+        root,
+        textvariable=progress_var,
+        bg="#1a1d24",
+        fg="#9ca3af",
+        font=("Segoe UI", 9),
+    ).pack(anchor="w", padx=10, pady=(2, 0))
     
     tree_frame = tk.Frame(root, bg="#1a1d24")
     tree_frame.pack(fill="x", padx=10, pady=4)
@@ -90,12 +101,144 @@ def main() -> None:
         try:
             data = load_feature_list(FEATURE_LIST_PATH)
             for f in data.get("features", []):
+                if f.get("status") == "done":
+                    continue
                 tree.insert("", tk.END, values=(f.get("id"), f.get("title") or f.get("name"), f.get("status")))
         except Exception:
             pass
 
     refresh_tasks()
     # -----------------------
+
+    def open_skills_window() -> None:
+        """Abre una ventana separada para activar/desactivar skills."""
+        sync_skills()
+        win = tk.Toplevel(root)
+        win.title("Skills disponibles")
+        win.geometry("820x520")
+        win.configure(bg="#1a1d24")
+
+        tk.Label(
+            win,
+            text="Skills: activa o desactiva las herramientas que puede usar el sistema.",
+            bg="#1a1d24",
+            fg="#c8d0e0",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", padx=10, pady=8)
+
+        skills_frame = tk.Frame(win, bg="#1a1d24")
+        skills_frame.pack(fill="both", expand=True, padx=10, pady=4)
+
+        skills_tree = ttk.Treeview(
+            skills_frame,
+            columns=("name", "enabled", "runtime", "path"),
+            show="headings",
+            height=10,
+        )
+        skills_tree.heading("name", text="Skill")
+        skills_tree.heading("enabled", text="Habilitada")
+        skills_tree.heading("runtime", text="Runtime")
+        skills_tree.heading("path", text="Archivo")
+        skills_tree.column("name", width=180)
+        skills_tree.column("enabled", width=90, anchor="center")
+        skills_tree.column("runtime", width=120, anchor="center")
+        skills_tree.column("path", width=360)
+        skills_tree.pack(side="left", fill="both", expand=True)
+
+        skills_scroll = ttk.Scrollbar(skills_frame, orient=tk.VERTICAL, command=skills_tree.yview)
+        skills_tree.configure(yscroll=skills_scroll.set)
+        skills_scroll.pack(side="right", fill="y")
+
+        instructions = scrolledtext.ScrolledText(
+            win,
+            wrap=tk.WORD,
+            height=8,
+            font=("Consolas", 9),
+            bg="#0f1117",
+            fg="#e6edf3",
+            insertbackground="#e6edf3",
+        )
+        instructions.pack(fill="both", expand=False, padx=10, pady=6)
+
+        skill_cache = {}
+
+        def refresh_skills() -> None:
+            skill_cache.clear()
+            for item in skills_tree.get_children():
+                skills_tree.delete(item)
+            for skill in sync_skills():
+                runtime = get_runtime_status(skill.name)
+                skill_cache[skill.name] = skill
+                skills_tree.insert(
+                    "",
+                    tk.END,
+                    iid=skill.name,
+                    values=(
+                        skill.name,
+                        "sí" if skill.enabled else "no",
+                        "corriendo" if runtime.running else runtime.status,
+                        skill.path,
+                    ),
+                )
+
+        def selected_skill_name() -> str | None:
+            selection = skills_tree.selection()
+            if not selection:
+                return None
+            return str(selection[0])
+
+        def show_selected_instructions(_event=None) -> None:
+            name = selected_skill_name()
+            instructions.delete("1.0", tk.END)
+            if not name:
+                return
+            skill = skill_cache.get(name)
+            if skill:
+                instructions.insert(tk.END, skill.instructions)
+
+        def set_selected(enabled: bool) -> None:
+            name = selected_skill_name()
+            if not name:
+                messagebox.showinfo("Skills", "Selecciona una skill primero.")
+                return
+            set_skill_enabled(name, enabled)
+            refresh_skills()
+            skills_tree.selection_set(name)
+            show_selected_instructions()
+
+        skills_tree.bind("<<TreeviewSelect>>", show_selected_instructions)
+
+        skill_buttons = tk.Frame(win, bg="#1a1d24")
+        skill_buttons.pack(fill="x", padx=10, pady=8)
+        tk.Button(
+            skill_buttons,
+            text="Activar",
+            command=lambda: set_selected(True),
+            bg="#059669",
+            fg="white",
+            relief="flat",
+            padx=12,
+        ).pack(side="left")
+        tk.Button(
+            skill_buttons,
+            text="Desactivar",
+            command=lambda: set_selected(False),
+            bg="#ef4444",
+            fg="white",
+            relief="flat",
+            padx=12,
+        ).pack(side="left", padx=(10, 0))
+        tk.Button(
+            skill_buttons,
+            text="Refrescar",
+            command=refresh_skills,
+            bg="#374151",
+            fg="white",
+            relief="flat",
+            padx=12,
+        ).pack(side="left", padx=(10, 0))
+
+        refresh_skills()
 
     log = scrolledtext.ScrolledText(
         root,
@@ -124,26 +267,50 @@ def main() -> None:
         def worker() -> None:
             try:
                 def emit(m: str) -> None:
-                    root.after(0, lambda: append(m))
+                    def update_ui() -> None:
+                        append(m)
+                        progress_var.set(f"Estado: {m[:140]}")
+                        refresh_tasks()
+
+                    root.after(0, update_ui)
 
                 goal = goal_entry.get().strip()
+                res = None
                 if goal:
-                    emit(f"Expandiendo objetivo: {goal}")
-                    added = expand_features_from_goal(
-                        user_goal=goal,
+                    if parse_whatsapp_command(goal) is not None:
+                        if not is_skill_enabled("whatsapp_connector"):
+                            raise RuntimeError("La skill whatsapp_connector está desactivada.")
+                        try:
+                            whatsapp_result = handle_input_command(goal)
+                        except Exception as exc:
+                            raise RuntimeError(f"Error ejecutando skill WhatsApp: {exc}") from exc
+
+                        assert whatsapp_result is not None
+                        emit(whatsapp_result.detail)
+                        root.after(0, lambda: goal_entry.delete(0, tk.END))
+                    else:
+                        emit(f"Expandiendo objetivo: {goal}")
+                        added = expand_features_from_goal(
+                            user_goal=goal,
+                            model=model_id,
+                            llm_chat=llm_chat,
+                        )
+                        emit(f"Se añadieron {added} nuevas features a la lista.")
+                        # Limpiar el input para que el próximo clic solo avance el ciclo
+                        root.after(0, lambda: goal_entry.delete(0, tk.END))
+                        root.after(0, refresh_tasks)
+
+                        res = run_one_feature_cycle(
+                            model=model_id,
+                            llm_chat=llm_chat,
+                            on_log=emit,
+                        )
+                else:
+                    res = run_one_feature_cycle(
                         model=model_id,
                         llm_chat=llm_chat,
+                        on_log=emit,
                     )
-                    emit(f"Se añadieron {added} nuevas features a la lista.")
-                    # Limpiar el input para que el próximo clic solo avance el ciclo
-                    root.after(0, lambda: goal_entry.delete(0, tk.END))
-                    root.after(0, refresh_tasks)
-
-                res = run_one_feature_cycle(
-                    model=model_id,
-                    llm_chat=llm_chat,
-                    on_log=emit,
-                )
             except Exception as exc:
                 err_msg = str(exc)
 
@@ -160,18 +327,23 @@ def main() -> None:
                 refresh_tasks()
                 if res is None:
                     append("No hay features pendientes o en progreso.")
+                    progress_var.set("Estado: no hay tareas pendientes.")
                     busy["continuous"] = False
                 else:
                     append(res.message)
                     append(f"Impl: {res.impl_path}")
                     append(f"Review: {res.review_path}")
+                    progress_var.set(f"Estado: tarea {res.feature_id} cerrada con veredicto {res.verdict}.")
                 append("--- Fin ---\n")
                 
                 busy["v"] = False
                 
-                if busy["continuous"] and res is not None:
+                if busy["continuous"] and res is not None and res.verdict is True:
                     append(">>> Iniciando siguiente tarea en 2 segundos... <<<")
                     root.after(2000, lambda: on_run(continuous=True))
+                elif busy["continuous"] and res is not None:
+                    append(">>> Modo continuo detenido: la tarea no fue aprobada. Revisa el informe antes de continuar. <<<")
+                    busy["continuous"] = False
 
             root.after(0, done)
 
@@ -216,6 +388,15 @@ def main() -> None:
         text="Refrescar Lista",
         command=refresh_tasks,
         bg="#059669",
+        fg="white",
+        relief="flat",
+        padx=12,
+    ).pack(side="left", padx=(10, 0))
+    tk.Button(
+        row,
+        text="Administrar Skills",
+        command=open_skills_window,
+        bg="#8b5cf6",
         fg="white",
         relief="flat",
         padx=12,

@@ -1,6 +1,7 @@
 import time
 from enum import Enum
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Optional
 
 # Definición del estado posible del scanner en cualquier momento dado
@@ -20,6 +21,6 @@ class ScannedData:
 @dataclass
 class ScannerState:
     """Representa el estado completo y persistente del manejo del escaneo."""
-    last_update_time: float = time.time()
+    last_update_time: float = field(default_factory=time.time)
     current_status: ScanStatus = ScanStatus.PENDING
     is_active: bool = True

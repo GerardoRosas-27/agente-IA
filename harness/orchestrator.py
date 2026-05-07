@@ -18,6 +18,15 @@ from harness.feature_store import (
     validate_feature_list,
 )
 from harness.llm import invoke_llm
+from harness.skill_registry import enabled_skills_context
+from harness.skill_registry import sync_skills
+from harness.shared_memory import (
+    add_self_improvement,
+    record_skill_usage,
+    remember,
+    self_improvement_context,
+    shared_memory_context,
+)
 from harness.paths import (
     AGENTS_MD,
     CHECKPOINTS_MD,
@@ -159,6 +168,62 @@ def _run_bash_blocks(text: str, log: Callable[[str], None]) -> None:
             log(f"Error ejecutando bash: {e}")
 
 
+def _module_name_from_path(rel_path: str) -> str | None:
+    if not rel_path.endswith(".py"):
+        return None
+    rel = rel_path[:-3].replace("\\", "/").strip("/")
+    parts = [part for part in rel.split("/") if part and part != "__init__"]
+    if not parts:
+        return None
+    if any(not re.match(r"^[A-Za-z_]\w*$", part) for part in parts):
+        return None
+    return ".".join(parts)
+
+
+def _validate_saved_files(saved_files: list[str]) -> str:
+    """Compila e importa archivos Python creados para detectar errores temprano."""
+    root = Path(__file__).resolve().parent.parent
+    reports: list[str] = []
+    python_files = [path for path in saved_files if path.endswith(".py")]
+    if not python_files:
+        return "No hubo archivos Python nuevos/modificados para validar."
+
+    for rel_path in python_files:
+        full_path = root / rel_path
+        reports.append(f"## Validando {rel_path}")
+        compile_cmd = [sys.executable, "-m", "py_compile", str(full_path)]
+        try:
+            r = subprocess.run(
+                compile_cmd,
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            reports.append(f"py_compile exit={r.returncode}\n{r.stdout}{r.stderr}".strip())
+        except Exception as exc:
+            reports.append(f"py_compile error: {exc}")
+            continue
+
+        module_name = _module_name_from_path(rel_path)
+        if module_name is None:
+            continue
+        import_cmd = [sys.executable, "-c", f"import {module_name}; print('import ok')"]
+        try:
+            r = subprocess.run(
+                import_cmd,
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            reports.append(f"import {module_name} exit={r.returncode}\n{r.stdout}{r.stderr}".strip())
+        except Exception as exc:
+            reports.append(f"import {module_name} error: {exc}")
+
+    return "\n\n".join(reports)
+
+
 def _run_tests() -> str:
     """Ejecuta los tests del proyecto y devuelve el output."""
     root = Path(__file__).resolve().parent.parent
@@ -208,6 +273,9 @@ def run_one_feature_cycle(
 
     agents_x = _read_head(AGENTS_MD, 3500)
     cp_x = _read_head(CHECKPOINTS_MD, 2500)
+    skills_x = enabled_skills_context()
+    memory_x = shared_memory_context(query=str(feat.get("name") or feat.get("title") or ""), limit=10)
+    improvements_x = self_improvement_context(limit=6)
     arch_x = _read_head(DOCS_DIR / "architecture.md", 3500)
     conv_x = _read_head(DOCS_DIR / "conventions.md", 2500)
     ver_x = _read_head(DOCS_DIR / "verification.md", 2500)
@@ -220,6 +288,9 @@ def run_one_feature_cycle(
             feature_block=fblock,
             agents_excerpt=agents_x,
             checkpoints_excerpt=cp_x,
+            skills_excerpt=skills_x,
+            memory_excerpt=memory_x,
+            improvements_excerpt=improvements_x,
         ),
         llm_chat=llm_chat,
         num_predict=num_predict_leader,
@@ -244,6 +315,7 @@ def run_one_feature_cycle(
                 leader_plan=leader_out,
                 architecture_excerpt=arch_x,
                 conventions_excerpt=conv_x,
+                memory_excerpt=memory_x,
                 previous_feedback=previous_feedback,
             ),
             llm_chat=llm_chat,
@@ -264,8 +336,25 @@ def run_one_feature_cycle(
 
         _run_bash_blocks(impl_body, log)
 
+        log("Validando archivos creados/modificados…")
+        validation_output = _validate_saved_files(saved_files)
+        debug_path = PROGRESS_DIR / f"debug_{slug}_attempt_{attempt + 1}.md"
+        debug_path.write_text(
+            f"# Debug · {feat.get('title')} (Intento {attempt + 1})\n\n"
+            f"## Archivos\n{', '.join(saved_files) if saved_files else '(ninguno)'}\n\n"
+            f"## Validación\n```text\n{validation_output}\n```\n",
+            encoding="utf-8",
+        )
+        log(f"Debug guardado: {debug_path.name}")
+
         log("Ejecutando tests automatizados…")
         test_output = _run_tests()
+        test_output = (
+            "## Validación de archivos creados\n"
+            f"{validation_output}\n\n"
+            "## Pytest\n"
+            f"{test_output}"
+        )
         log(f"Tests finalizados. Longitud del output: {len(test_output)} caracteres.")
 
         log("Revisor: evaluando…")
@@ -299,6 +388,24 @@ def run_one_feature_cycle(
     data = load_feature_list(FEATURE_LIST_PATH)
     if verdict is True:
         set_feature_status(data, fid, "done")
+        sync_skills()
+        remember(
+            "feature",
+            slug,
+            f"Feature id={fid} completada. {feat.get('title')}. Artefactos: {impl_path.name}, {review_path.name}.",
+            tags=["done", "feature", slug],
+            confidence=1.0,
+        )
+        for saved_file in (saved_files if "saved_files" in locals() else []):
+            if saved_file.startswith("skills/") and saved_file.endswith(".py"):
+                skill_name = Path(saved_file).stem
+                record_skill_usage(
+                    skill_name,
+                    str(feat.get("title") or slug),
+                    f"Skill creada o actualizada por la feature {fid}; revisar `skills/{skill_name}.md` para uso.",
+                    success=True,
+                    outcome="feature aprobada",
+                )
         msg = f"Feature {fid} marcada done. Artefactos: {impl_path.name}, {review_path.name}"
         _append_history_line(
             f"- **{stamp_summary()}** feature `{slug}` (id={fid}) → **DONE**. "
@@ -306,6 +413,18 @@ def run_one_feature_cycle(
         )
     elif verdict is False:
         set_feature_status(data, fid, "pending")
+        remember(
+            "feature_failure",
+            f"{slug}_last_failure",
+            f"Feature id={fid} falló revisión. Revisión: {review_path.name}.",
+            tags=["fail", "feature", slug],
+            confidence=0.8,
+        )
+        add_self_improvement(
+            f"feature:{slug}",
+            "Revisar patrón de fallo y mejorar prompts/tests si el mismo tipo de error se repite.",
+            evidence=f"Revisor FAIL en {review_path.name}",
+        )
         msg = (
             f"Revisor FAIL: feature {fid} vuelve a pending. Revisa `{review_path.name}` "
             "y corrige antes de reintentar."
@@ -316,6 +435,11 @@ def run_one_feature_cycle(
         )
     else:
         set_feature_status(data, fid, "pending")
+        add_self_improvement(
+            f"feature:{slug}",
+            "Hacer más estricto el prompt del revisor para evitar veredictos ambiguos.",
+            evidence="El revisor no inició con VERDICT: PASS/FAIL.",
+        )
         msg = (
             f"Veredicto ambiguo: feature {fid} queda pending. "
             "El revisor debe empezar con VERDICT: PASS o VERDICT: FAIL."
@@ -417,6 +541,13 @@ def expand_features_from_goal(
 
     data["features"] = features
     save_feature_list(FEATURE_LIST_PATH, data)
+    remember(
+        "user_goal",
+        f"goal_{stamp_summary()}",
+        f"Objetivo expandido en {added} feature(s): {user_goal}",
+        tags=["goal", "initializer"],
+        confidence=0.9,
+    )
     _append_history_line(
         f"- **{stamp_summary()}** inicializador: +{added} features desde objetivo de usuario."
     )

@@ -17,7 +17,7 @@ def handler_skill():
     return QrScanHandlerSkill()
 
 # --- Test Suite 1: Escaneo Exitoso (AC1) ---
-def test_successful_scan(qr_processor, mocker):
+def test_successful_scan(qr_processor):
     """Test 1: Verifica que la lectura exitosa se parsea correctamente y actualiza el estado a SUCCESS."""
     mock_time = time.time() + 5 # Simular un tiempo futuro
     
@@ -48,7 +48,7 @@ def test_handling_malformed_input_valueerror(qr_processor):
 
 
 # --- Test Suite 3: Timeout (AC2 - Time) ---
-def test_scan_timeout(handler_skill, mocker):
+def test_scan_timeout(handler_skill):
     """Test 3: Simula el paso del tiempo para forzar la detección de timeout."""
     
     # Mockear time.time() dos veces: inicial y luego después del timeout
@@ -66,19 +66,18 @@ def test_scan_timeout(handler_skill, mocker):
         assert scanned_data.status == ScanStatus.TIMEOUT
 
 # --- Test Suite 4: Integración del Skill (Flujo Completo) ---
-def test_full_integration_flow(handler_skill, mocker):
+def test_full_integration_flow(handler_skill):
     """Verifica el flujo completo de manejo de escaneo usando la API pública del Skill."""
     initial_time = time.time()
-    mocker.patch('time.time', return_value=initial_time)
 
     # 1. Primer intento (Éxito)
-    result1 = handler_skill.handle_scan("SCAN-SUCCESS-001")
-    assert result1.status == ScanStatus.SUCCESS
+    with patch('time.time', return_value=initial_time):
+        result1 = handler_skill.handle_scan("SCAN-SUCCESS-001")
+        assert result1.status == ScanStatus.SUCCESS
 
     # Simular un tiempo de espera corto para resetear el contador de timeout
-    mocker.patch('time.time', return_value=initial_time + 5)
-    
     # 2. Segundo intento (Fallo por mal dato)
-    result2 = handler_skill.handle_scan("SCAN-INVALID")
-    assert result2.status == ScanStatus.FAILED_INPUT
+    with patch('time.time', return_value=initial_time + 5):
+        result2 = handler_skill.handle_scan("SCAN-INVALID")
+        assert result2.status == ScanStatus.FAILED_INPUT
 

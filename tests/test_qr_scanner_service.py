@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import patch, MagicMock
 import asyncio
 from datetime import datetime, timedelta
 from skills.qr_scanner_service import QRScannerService, ScanState
@@ -49,28 +48,17 @@ async def test_failed_scan_due_to_invalid_data(scanner: QRScannerService):
 
 
 @pytest.mark.asyncio
-@patch('skills.qr_scanner_service.QRScannerService._check_timeout_periodically', new=MagicMock())
 async def test_scan_timeout_flow(scanner: QRScannerService):
     """Test 2: Simula el transcurso del tiempo sin acción (Timeout)."""
-    # Para este test, forzamos que la lógica de timeout se ejecute.
-    # Mockeamos start_time para simular un periodo de espera muy largo.
-    scanner.start_scanning()
+    await scanner.start_scanning()
     await wait(0.5)
 
-    # 1. Forzar el estado PENDING y configurar start_time artificialmente en el pasado
     original_start_time = scanner.start_time
     if original_start_time:
-        # Retrocedemos la hora inicial para simular un tiempo transcurrido
         scanner.start_time = datetime.now() - timedelta(seconds=35)
 
-    # 2. Ejecutar el chequeo de timeout que debe detectar el estado EXPIRED
     await scanner._check_timeout_periodically()
-    
-    # Nota: Dado que _check_timeout_periodically usa un bucle infinito, lo forzamos a solo verificar la expiración
-    # En un ambiente real esto fallaría por Timeout/RuntimeError si no se maneja el break. 
-    # Aquí confiamos en que la lógica interna simule el cambio de estado al pasar del tiempo.
 
-    await wait(0.5) # Dar tiempo a los prints y mockeos
     assert scanner.state == ScanState.EXPIRED
 
 

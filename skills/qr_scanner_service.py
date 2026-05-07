@@ -1,7 +1,7 @@
-import time
 from enum import Enum
-from typing import Optional, Any
+from typing import Optional
 from datetime import datetime
+import asyncio
 
 class ScanState(Enum):
     """Define los posibles estados del servicio de escaneo QR."""
@@ -38,19 +38,22 @@ class QRScannerService:
         self._state = ScanState.PENDING_SCAN
         self.start_time = datetime.now()
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Servicio QR iniciado. Tiempo límite: {self.SCAN_TIMEOUT_SECONDS} segundos.")
-        # Inicia el chequeo de timeout en segundo plano (simulado)
-        await self._check_timeout_periodically()
 
     async def _check_timeout_periodically(self):
-        """Simula la verificación periódica para detectar expiración."""
-        while True:
-            await asyncio.sleep(5) # Chequeo cada 5 segundos (simulación real de background task)
-            elapsed = (datetime.now() - self.start_time).total_seconds()
-            if elapsed > self.SCAN_TIMEOUT_SECONDS and self._state in [ScanState.PENDING_SCAN, ScanState.CONNECTING]:
-                print(f"\n[{datetime.now().strftime('%H:%M:%S')}] !!! Timeout detectado después de {int(elapsed)} segundos.")
-                self._state = ScanState.EXPIRED
-                # Detener el chequeo una vez que se alcanza el estado final
-                break
+        """Verifica una vez si la ventana de escaneo expiró."""
+        if self.start_time is None:
+            return
+
+        elapsed = (datetime.now() - self.start_time).total_seconds()
+        if elapsed > self.SCAN_TIMEOUT_SECONDS and self._state in {
+            ScanState.PENDING_SCAN,
+            ScanState.CONNECTING,
+        }:
+            print(
+                f"\n[{datetime.now().strftime('%H:%M:%S')}] "
+                f"!!! Timeout detectado después de {int(elapsed)} segundos."
+            )
+            self._state = ScanState.EXPIRED
 
     async def process_scan(self, qr_data: str) -> bool:
         """
@@ -61,8 +64,12 @@ class QRScannerService:
             print(f"Error de proceso: No se puede escanear porque el servicio está en estado {self.state.value}.")
             return False
 
-        # Validación 1: Chequeo básico de datos (simulación de fallo de lectura)
-        if not qr_data or len(qr_data) < 5:
+        await self._check_timeout_periodically()
+        if self.state == ScanState.EXPIRED:
+            return False
+
+        # Validación 1: chequeo básico de datos.
+        if not qr_data or len(qr_data) < 8:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR LECTURA QR: Los datos son ilegibles o inválidos.")
             self._state = ScanState.FAILED
             return False
@@ -70,7 +77,7 @@ class QRScannerService:
         # Simulación de procesamiento y conexión (ejemplo: API call)
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Iniciando conexión con datos QR: {qr_data[:10]}...")
         self._state = ScanState.CONNECTING
-        await asyncio.sleep(1) # Simula latencia de red
+        await asyncio.sleep(0)  # Cede el control sin ralentizar los tests.
 
         # Validación 2: Lógica de negocio (simulación de éxito vs fracaso del contenido)
         if "VALID" in qr_data.upper():
@@ -90,9 +97,6 @@ class QRScannerService:
         print("--- Servicio reiniciado ---")
         self._state = ScanState.DISCONNECTED
         self.start_time = None
-
-
-import asyncio
 if __name__ == "__main__":
     async def main():
         scanner = QRScannerService()

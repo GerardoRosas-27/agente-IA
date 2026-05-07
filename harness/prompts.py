@@ -10,6 +10,7 @@ Reglas:
   2. CREACIÓN/HERRAMIENTA: Si se pide crear algo (programa, conexión, script, herramienta).
 - Si es CREACIÓN/HERRAMIENTA, tu plan debe ordenar que la herramienta final se guarde en la carpeta `skills/` cuando esté terminada, y TODO lo que se vaya creando/probando intermedialmente se guarde en la carpeta `progress/`.
 - Además, para CREACIÓN/HERRAMIENTA, DEBES definir una serie de pruebas automatizadas o de validación claras que se deben ejecutar. Si esas pruebas fallan, el ciclo no terminará.
+- Divide trabajo grande en subtareas pequeñas que produzcan archivos ejecutables, pruebas y documentación de uso.
 - Cita rutas de archivos del repo cuando propongas qué leer o actualizar.
 - Responde en español."""
 
@@ -25,6 +26,8 @@ Si no usas el formato ````lenguaje:ruta````, tu código se perderá y fallarás 
 Reglas adicionales:
 - Si el plan indica CREACIÓN/HERRAMIENTA, debes crear la herramienta final en la carpeta `skills/` y cualquier artefacto o código intermedio debes guardarlo en `progress/`.
 - Asegúrate de implementar o incluir las pruebas definidas por el líder para verificar que la herramienta está lista y puede ser entregada.
+- Todo código Python creado debe poder compilarse e importarse. Si recibes feedback de debug/pytest, corrige los archivos afectados y vuelve a entregar bloques completos.
+- Si creas una herramienta final, incluye también `skills/<nombre>.md` con instrucciones claras de uso.
 
 Incluye secciones obligatorias:
 ## Resumen
@@ -48,7 +51,7 @@ Sé escéptico (patrón generator-evaluator de Anthropic): un PASS solo si hay e
 
 Verificaciones especiales:
 - Si era un ciclo de CREACIÓN/HERRAMIENTA, verifica que existan las pruebas requeridas, que hayan pasado exitosamente (revisa la Salida de los tests automatizados) y que la herramienta final se entregue en la carpeta `skills/`.
-- Si la herramienta no está lista o los tests fallan, el ciclo debe continuar (rechaza con FAIL).
+- Si la herramienta no compila, no importa, no tiene instrucciones de uso, no está lista o los tests fallan, el ciclo debe continuar (rechaza con FAIL).
 
 La PRIMERA línea del cuerpo DEBE ser exactamente una de:
 VERDICT: PASS
@@ -67,6 +70,9 @@ def leader_user_message(
     feature_block: str,
     agents_excerpt: str,
     checkpoints_excerpt: str,
+    skills_excerpt: str = "",
+    memory_excerpt: str = "",
+    improvements_excerpt: str = "",
 ) -> str:
     return f"""Contexto del repo (extractos):
 
@@ -75,6 +81,15 @@ def leader_user_message(
 
 --- CHECKPOINTS.md (inicio) ---
 {checkpoints_excerpt}
+
+--- Skills habilitadas ---
+{skills_excerpt or "No hay skills habilitadas."}
+
+--- Memoria compartida relevante ---
+{memory_excerpt or "No hay memoria relevante todavía."}
+
+--- Auto-mejoras pendientes ---
+{improvements_excerpt or "No hay auto-mejoras pendientes."}
 
 --- Feature en curso ---
 {feature_block}
@@ -89,6 +104,7 @@ def implementer_user_message(
     leader_plan: str,
     architecture_excerpt: str,
     conventions_excerpt: str,
+    memory_excerpt: str = "",
     previous_feedback: str | None = None,
 ) -> str:
     feedback_section = ""
@@ -108,6 +124,9 @@ def implementer_user_message(
 
 --- Plan del líder ---
 {leader_plan}
+
+--- Memoria mínima útil para esta subtarea ---
+{memory_excerpt or "Sin memoria adicional relevante."}
 {feedback_section}
 Redacta el informe de implementación para esta única feature."""
 

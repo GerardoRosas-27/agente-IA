@@ -14,6 +14,11 @@ from harness.feature_store import (
 )
 from harness.orchestrator import expand_features_from_goal, run_one_feature_cycle
 from harness.paths import FEATURE_LIST_PATH
+from harness.shared_memory import (
+    self_improvement_context,
+    shared_memory_context,
+    skill_memory_context,
+)
 
 
 def _cmd_init(_args: argparse.Namespace) -> int:
@@ -44,6 +49,16 @@ def _cmd_status(_args: argparse.Namespace) -> int:
     c = Counter(str(f.get("status")) for f in feats if isinstance(f, dict))
     for k in ("pending", "in_progress", "done", "blocked"):
         print(f"  {k}: {c.get(k, 0)}")
+    return 0
+
+
+def _cmd_memory(args: argparse.Namespace) -> int:
+    print("Memoria compartida:")
+    print(shared_memory_context(query=args.query or "", limit=args.limit))
+    print("\nAprendizajes de skills:")
+    print(skill_memory_context(limit=args.limit))
+    print("\nAuto-mejoras pendientes:")
+    print(self_improvement_context(limit=args.limit))
     return 0
 
 
@@ -105,6 +120,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     s_st = sub.add_parser("status", help="Resumen de estados en feature_list.json")
     s_st.set_defaults(func=_cmd_status)
+
+    s_mem = sub.add_parser("memory", help="Muestra memoria compartida y aprendizajes")
+    s_mem.add_argument("--query", default="", help="Filtro textual opcional")
+    s_mem.add_argument("--limit", type=int, default=10)
+    s_mem.set_defaults(func=_cmd_memory)
 
     s_run = sub.add_parser("run", help="Un ciclo sobre la siguiente feature (o la in_progress)")
     s_run.add_argument(

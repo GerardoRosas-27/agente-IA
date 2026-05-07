@@ -1,3 +1,6 @@
 # ... otras dependencias
 playwright>=1.37.0 # Para automatización web y manejo de sesión
 pydantic # Ya existente o recomendado para tipado
+pywhatkit>=5.4
+Flask>=3.0
+requests>=2.31
