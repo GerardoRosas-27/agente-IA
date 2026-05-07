@@ -396,3 +396,58 @@ Antes de considerar esta feature como completada, debes ejecutar las siguientes 
 
 ---
 *Por favor, comienza por implementar el detector (`progress/impl_qr_scan_handling.md`) y luego avísame cuando estés listo para que yo, como Líder, revise la implementación antes de pasar a las pruebas.*
+
+
+## [2026-05-07T14:46:08] Líder · feature 5
+
+El ciclo activo es de tipo **CREACIÓN/HERRAMIENTA**.
+
+Nuestro objetivo es crear un nuevo *skill* llamado `arithmetic_calculator` que encapsule la lógica de las cuatro operaciones básicas, garantizando el manejo robusto de los errores inherentes, como la división por cero.
+
+---
+
+### Plan de Sesión para Implementador: `basic_operations` (Skill: `arithmetic_calculator`)
+
+**Objetivo:** Crear un módulo ejecutable en `skills/` que realice cálculos básicos (+, -, \*, /) y pase las pruebas unitarias definidas.
+
+#### 1. Preparación del Entorno y Estructura
+*   **Acción:** El implementador debe crear el esqueleto base para la nueva skill.
+*   **Archivos de Interés:** `skills/arithmetic_calculator.py` (nuevo) y `progress/plan_basic_operations_<timestamp>.md`.
+
+#### 2. Subtarea 1: Implementación del Core Logic (Drafting)
+*   **Intención:** Escribir la función principal en `skills/arithmetic_calculator.py` que acepte tres argumentos: `num1`, `num2`, y `operator`. Esta función debe devolver el resultado o lanzar una excepción controlada si ocurre un error lógico (ej. división por cero).
+*   **Detalles de Implementación:**
+    *   Debe usar lógica condicional (`if/elif`) para determinar la operación.
+    *   Debe encapsular el chequeo de división por cero en un bloque `try...except` o un `if` explícito antes de ejecutar `/`.
+*   **Artefacto de Progreso:** Guardar este primer borrador detallado y los casos de uso tentativos en `progress/plan_basic_operations_<timestamp>.md`.
+
+#### 3. Subtarea 2: Creación del Módulo de Pruebas Unitarias (Testing)
+*   **Intención:** Crear un archivo de prueba unitaria separado para verificar la funcionalidad contra los criterios de aceptación.
+*   **Archivo:** `tests/test_arithmetic.py` (Actualizar o crear).
+*   **Lógica de Prueba (Ejemplos que deben pasar):**
+    1.  Suma: Test con 5 y 3 debe devolver 8.
+    2.  Resta: Test con 10 y 4 debe devolver 6.
+    3.  Multiplicación: Test con 5 y 4 debe devolver 20.
+    4.  División OK: Test con 10 y 2 debe devolver 5.
+    5.  **Caso Crítico:** Test de división por cero (ej., 10 / 0) debe fallar y capturar la excepción específica definida en el *skill*.
+
+#### 4. Subtarea 3: Refinamiento e Integración Final
+*   **Intención:** Ajustar `skills/arithmetic_calculator.py` para asegurar que maneje correctamente las excepciones levantadas durante las pruebas (Subtarea 2). Si la prueba falla, el código del *skill* debe ser ajustado hasta que todas las pruebas pasen coherentemente.
+*   **Verificación de Dependencias:** Confirmar que el `harness` pueda importar y llamar a esta skill de manera limpia (verificar rutas de importación en `__init__.py` si aplica).
+
+---
+
+### Validación Obligatoria (Checkpoints)
+
+Antes de considerar la feature como lista para revisión, se deben ejecutar las siguientes pruebas:
+
+1.  **Ejecución de Pruebas Unitarias:**
+    ```bash
+    pytest tests/test_arithmetic.py
+    # Esperado: Todos los testes pasan en verde.
+    ```
+2.  **Prueba Manual del Caso Crítico:**
+    *   Llamar a la skill manualmente (simulando un *call*) con `(10, 0, "/")` y verificar que se imprima/lance el mensaje de error específico "La división por cero no es válida."
+
+---
+*(Al completar estas tres subtareas y superar las validaciones, se creará `progress/basic_operations.md` listo para pasar al Revisor.)*

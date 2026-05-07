@@ -2,6 +2,7 @@ from pathlib import Path
 
 from harness.shared_memory import (
     add_self_improvement,
+    list_self_improvements,
     recall,
     record_skill_usage,
     remember,
@@ -67,3 +68,6 @@ def test_self_improvement_context(tmp_path: Path) -> None:
     context = self_improvement_context(db_path=db_path)
     assert "Crear tests" in context
     assert "fallo previo" in context
+    items = list_self_improvements(db_path=db_path)
+    assert len(items) == 1
+    assert items[0].status == "pending"

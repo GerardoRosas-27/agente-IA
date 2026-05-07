@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from harness.feature_store import (
+    USER_TASK_ORIGIN,
     load_feature_list,
     pick_next_pending,
     save_feature_list,
@@ -29,8 +30,8 @@ class TestFeatureStore(unittest.TestCase):
     def test_validate_rejects_two_in_progress(self) -> None:
         data = {
             "features": [
-                {"id": 1, "status": "in_progress"},
-                {"id": 2, "status": "in_progress"},
+                    {"id": 1, "origin": USER_TASK_ORIGIN, "status": "in_progress"},
+                    {"id": 2, "origin": USER_TASK_ORIGIN, "status": "in_progress"},
             ]
         }
         errs = validate_feature_list(data)
@@ -39,13 +40,23 @@ class TestFeatureStore(unittest.TestCase):
     def test_pick_next_pending_lowest_id(self) -> None:
         feats = [
             {"id": 3, "status": "done"},
-            {"id": 2, "status": "pending"},
-            {"id": 1, "status": "pending"},
+            {"id": 2, "origin": USER_TASK_ORIGIN, "status": "pending"},
+            {"id": 1, "origin": USER_TASK_ORIGIN, "status": "pending"},
         ]
         n = pick_next_pending(feats)
         self.assertIsNotNone(n)
         assert n is not None
         self.assertEqual(n["id"], 1)
+
+    def test_pick_next_pending_ignores_legacy_tasks(self) -> None:
+        feats = [
+            {"id": 1, "status": "pending"},
+            {"id": 2, "origin": USER_TASK_ORIGIN, "status": "pending"},
+        ]
+        n = pick_next_pending(feats)
+        self.assertIsNotNone(n)
+        assert n is not None
+        self.assertEqual(n["id"], 2)
 
     def test_set_feature_status(self) -> None:
         data = {"features": [{"id": 5, "status": "pending"}]}

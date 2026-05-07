@@ -51,3 +51,13 @@
 ## [2026-05-07T12:49:55] Entrada
 
 - **2026-05-07T12:49:55** feature `qr_scan_handling` (id=5) → **FAIL** (pending de nuevo). Motivo en `review_qr_scan_handling.md`.
+
+
+## [2026-05-07T14:45:35] Entrada
+
+- **2026-05-07T14:45:35** inicializador: +4 features desde objetivo de usuario.
+
+
+## [2026-05-07T14:47:10] Entrada
+
+- **2026-05-07T14:47:10** feature `basic_operations` (id=5) → **DONE**. Ver `impl_basic_operations.md` y `review_basic_operations.md`.

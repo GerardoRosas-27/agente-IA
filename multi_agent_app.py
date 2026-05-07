@@ -12,8 +12,9 @@ import tkinter as tk
 from tkinter import messagebox, scrolledtext
 from tkinter import ttk
 
-from harness.feature_store import load_feature_list
+from harness.feature_store import USER_TASK_ORIGIN, load_feature_list
 from harness.paths import FEATURE_LIST_PATH
+from harness.shared_memory import list_self_improvements
 from harness.skill_registry import is_skill_enabled, set_skill_enabled, sync_skills
 from harness.skill_runtime import get_runtime_status
 from skills.whatsapp_connector import handle_input_command, parse_whatsapp_command
@@ -101,6 +102,8 @@ def main() -> None:
         try:
             data = load_feature_list(FEATURE_LIST_PATH)
             for f in data.get("features", []):
+                if f.get("origin") != USER_TASK_ORIGIN:
+                    continue
                 if f.get("status") == "done":
                     continue
                 tree.insert("", tk.END, values=(f.get("id"), f.get("title") or f.get("name"), f.get("status")))
@@ -239,6 +242,63 @@ def main() -> None:
         ).pack(side="left", padx=(10, 0))
 
         refresh_skills()
+
+    def open_self_improvements_window() -> None:
+        """Muestra auto-mejoras separadas de la cola de tareas del usuario."""
+        win = tk.Toplevel(root)
+        win.title("Auto-mejoras del sistema")
+        win.geometry("900x460")
+        win.configure(bg="#1a1d24")
+
+        tk.Label(
+            win,
+            text="Auto-mejoras internas: esta cola no se mezcla con tareas del usuario.",
+            bg="#1a1d24",
+            fg="#c8d0e0",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", padx=10, pady=8)
+
+        frame = tk.Frame(win, bg="#1a1d24")
+        frame.pack(fill="both", expand=True, padx=10, pady=4)
+
+        columns = ("id", "source", "status", "proposal")
+        improvements_tree = ttk.Treeview(frame, columns=columns, show="headings", height=12)
+        improvements_tree.heading("id", text="ID")
+        improvements_tree.heading("source", text="Origen")
+        improvements_tree.heading("status", text="Estado")
+        improvements_tree.heading("proposal", text="Propuesta")
+        improvements_tree.column("id", width=50, anchor="center")
+        improvements_tree.column("source", width=180)
+        improvements_tree.column("status", width=100, anchor="center")
+        improvements_tree.column("proposal", width=520)
+        improvements_tree.pack(side="left", fill="both", expand=True)
+
+        scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=improvements_tree.yview)
+        improvements_tree.configure(yscroll=scroll.set)
+        scroll.pack(side="right", fill="y")
+
+        def refresh_improvements() -> None:
+            for item in improvements_tree.get_children():
+                improvements_tree.delete(item)
+            for item in list_self_improvements():
+                improvements_tree.insert(
+                    "",
+                    tk.END,
+                    values=(item.id, item.source, item.status, item.proposal),
+                )
+
+        row = tk.Frame(win, bg="#1a1d24")
+        row.pack(fill="x", padx=10, pady=8)
+        tk.Button(
+            row,
+            text="Refrescar",
+            command=refresh_improvements,
+            bg="#374151",
+            fg="white",
+            relief="flat",
+            padx=12,
+        ).pack(side="left")
+        refresh_improvements()
 
     log = scrolledtext.ScrolledText(
         root,
@@ -397,6 +457,15 @@ def main() -> None:
         text="Administrar Skills",
         command=open_skills_window,
         bg="#8b5cf6",
+        fg="white",
+        relief="flat",
+        padx=12,
+    ).pack(side="left", padx=(10, 0))
+    tk.Button(
+        row,
+        text="Auto-mejoras",
+        command=open_self_improvements_window,
+        bg="#a16207",
         fg="white",
         relief="flat",
         padx=12,

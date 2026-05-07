@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from harness.feature_store import (
+    USER_TASK_ORIGIN,
+    is_user_task,
     load_feature_list,
     pick_next_pending,
     save_feature_list,
@@ -104,7 +106,11 @@ class HarnessCycleResult:
 
 def _get_in_progress(features: list[dict[str, Any]]) -> dict[str, Any] | None:
     for f in features:
-        if isinstance(f, dict) and f.get("status") == "in_progress":
+        if (
+            isinstance(f, dict)
+            and is_user_task(f)
+            and f.get("status") == "in_progress"
+        ):
             return f
     return None
 
@@ -522,6 +528,7 @@ def expand_features_from_goal(
         if not isinstance(item, dict):
             continue
         item = dict(item)
+        item["origin"] = USER_TASK_ORIGIN
         item.setdefault("status", "pending")
         if item["status"] not in {"pending"}:
             item["status"] = "pending"

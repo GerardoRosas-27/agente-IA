@@ -8,6 +8,12 @@ from typing import Any
 
 
 VALID_STATUS = frozenset({"pending", "in_progress", "done", "blocked"})
+USER_TASK_ORIGIN = "user"
+
+
+def is_user_task(feature: dict[str, Any]) -> bool:
+    """Indica si una feature pertenece a la cola visible del usuario."""
+    return feature.get("origin") == USER_TASK_ORIGIN
 
 
 def load_feature_list(path: Path) -> dict[str, Any]:
@@ -46,15 +52,21 @@ def validate_feature_list(data: dict[str, Any]) -> list[str]:
         st = f.get("status")
         if st not in VALID_STATUS:
             errs.append(f"features[{i}].status inválido: {st!r}")
-        if st == "in_progress":
+        if st == "in_progress" and is_user_task(f):
             in_prog += 1
     if in_prog > 1:
-        errs.append("Solo puede haber una feature con status «in_progress»")
+        errs.append("Solo puede haber una tarea de usuario con status «in_progress»")
     return errs
 
 
 def pick_next_pending(features: list[dict[str, Any]]) -> dict[str, Any] | None:
-    pending = [f for f in features if isinstance(f, dict) and f.get("status") == "pending"]
+    pending = [
+        f
+        for f in features
+        if isinstance(f, dict)
+        and is_user_task(f)
+        and f.get("status") == "pending"
+    ]
     if not pending:
         return None
 

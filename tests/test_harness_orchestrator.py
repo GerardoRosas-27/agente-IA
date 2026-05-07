@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from harness import orchestrator
-from harness.feature_store import save_feature_list
+from harness.feature_store import USER_TASK_ORIGIN, save_feature_list
 
 
 class TestParseVerdict(unittest.TestCase):
@@ -36,6 +36,7 @@ class TestRunOneFeatureCycle(unittest.TestCase):
                         "title": "Demo",
                         "description": "test",
                         "acceptance": ["criterio"],
+                        "origin": USER_TASK_ORIGIN,
                         "status": "pending",
                     }
                 ]

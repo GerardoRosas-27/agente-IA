@@ -23,6 +23,16 @@ class MemoryItem:
     updated_at: str
 
 
+@dataclass(frozen=True)
+class SelfImprovementItem:
+    id: int
+    source: str
+    proposal: str
+    status: str
+    evidence: str
+    created_at: str
+
+
 def _connect(db_path: Path = STATE_DB_PATH) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -252,6 +262,36 @@ def self_improvement_context(limit: int = 6, db_path: Path = STATE_DB_PATH) -> s
         f"- [{row['created_at']}] {row['source']}: {row['proposal']} Evidencia: {row['evidence']}"
         for row in rows
     )
+
+
+def list_self_improvements(
+    *,
+    status: str | None = None,
+    limit: int = 100,
+    db_path: Path = STATE_DB_PATH,
+) -> list[SelfImprovementItem]:
+    """Lista auto-mejoras en una cola separada de tareas de usuario."""
+    init_memory_db(db_path)
+    sql = "SELECT id, source, proposal, status, evidence, created_at FROM self_improvements"
+    params: list[Any] = []
+    if status:
+        sql += " WHERE status = ?"
+        params.append(status)
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(int(limit))
+    with _connect(db_path) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [
+        SelfImprovementItem(
+            id=int(row["id"]),
+            source=str(row["source"]),
+            proposal=str(row["proposal"]),
+            status=str(row["status"]),
+            evidence=str(row["evidence"]),
+            created_at=str(row["created_at"]),
+        )
+        for row in rows
+    ]
 
 
 def shared_memory_context(query: str = "", limit: int = 10, db_path: Path = STATE_DB_PATH) -> str:
