@@ -29,6 +29,7 @@ from harness.shared_memory import (
     self_improvement_context,
     shared_memory_context,
 )
+from harness.tool_learning import internal_execution_context, learned_tools_context
 from harness.paths import (
     AGENTS_MD,
     CHECKPOINTS_MD,
@@ -307,8 +308,10 @@ def run_one_feature_cycle(
 
     agents_x = _read_head(AGENTS_MD, 3500)
     cp_x = _read_head(CHECKPOINTS_MD, 2500)
-    skills_x = enabled_skills_context()
-    memory_x = shared_memory_context(query=str(feat.get("name") or feat.get("title") or ""), limit=10)
+    feature_query = str(feat.get("name") or feat.get("title") or "")
+    internal_x = internal_execution_context(feature_query)
+    skills_x = enabled_skills_context() + "\n\n--- Recomendador aprendido de herramientas ---\n" + learned_tools_context(feature_query)
+    memory_x = shared_memory_context(query=feature_query, limit=10)
     improvements_x = self_improvement_context(limit=6)
     arch_x = _read_head(DOCS_DIR / "architecture.md", 3500)
     conv_x = _read_head(DOCS_DIR / "conventions.md", 2500)
@@ -325,6 +328,7 @@ def run_one_feature_cycle(
             skills_excerpt=skills_x,
             memory_excerpt=memory_x,
             improvements_excerpt=improvements_x,
+            internal_context=internal_x,
         ),
         llm_chat=llm_chat,
         num_predict=num_predict_leader,
@@ -350,6 +354,7 @@ def run_one_feature_cycle(
                 architecture_excerpt=arch_x,
                 conventions_excerpt=conv_x,
                 memory_excerpt=memory_x,
+                internal_context=internal_x,
                 previous_feedback=previous_feedback,
             ),
             llm_chat=llm_chat,

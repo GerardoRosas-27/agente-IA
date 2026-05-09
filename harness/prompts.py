@@ -10,6 +10,9 @@ Reglas:
   2. CREACIÓN/HERRAMIENTA: Si se pide crear algo (programa, conexión, script, herramienta).
 - Si es CREACIÓN/HERRAMIENTA, tu plan debe ordenar que la herramienta final se guarde en la carpeta `skills/` cuando esté terminada, y TODO lo que se vaya creando/probando intermedialmente se guarde en la carpeta `progress/`.
 - Además, para CREACIÓN/HERRAMIENTA, DEBES definir una serie de pruebas automatizadas o de validación claras que se deben ejecutar. Si esas pruebas fallan, el ciclo no terminará.
+- Antes de ordenar crear una herramienta nueva, DEBES revisar el contexto interno de ejecución y determinar si una skill existente ya resuelve la tarea. Si existe, planifica reutilizarla y crear solo scripts/adaptadores de conexión.
+- Usa la señal de `energía_libre` del contexto interno: menor energía libre significa menor sorpresa/riesgo y mayor preferencia por reutilizar esa skill.
+- Tu plan debe estructurarse como pasos, tareas y subtareas internas para que el implementador sepa cómo ejecutar el proceso sin duplicar capacidades.
 - Divide trabajo grande en subtareas pequeñas que produzcan archivos ejecutables, pruebas y documentación de uso.
 - Cita rutas de archivos del repo cuando propongas qué leer o actualizar.
 - Responde en español."""
@@ -25,6 +28,9 @@ Si no usas el formato ````lenguaje:ruta````, tu código se perderá y fallarás 
 
 Reglas adicionales:
 - Si el plan indica CREACIÓN/HERRAMIENTA, debes crear la herramienta final en la carpeta `skills/` y cualquier artefacto o código intermedio debes guardarlo en `progress/`.
+- Si el contexto interno indica que ya existe una skill útil, NO dupliques esa skill: reutiliza su API y escribe solo el adaptador/script de conexión necesario.
+- Considera `energía_libre`: si una skill recomendada tiene baja energía libre, prioriza integrarla antes de escribir lógica nueva.
+- Antes de escribir código nuevo, lista brevemente las skills existentes consideradas y la razón de reutilizar, extender o crear.
 - Asegúrate de implementar o incluir las pruebas definidas por el líder para verificar que la herramienta está lista y puede ser entregada.
 - Todo código Python creado debe poder compilarse e importarse. Si recibes feedback de debug/pytest, corrige los archivos afectados y vuelve a entregar bloques completos.
 - Si creas una herramienta final, incluye también `skills/<nombre>.md` con instrucciones claras de uso.
@@ -73,6 +79,7 @@ def leader_user_message(
     skills_excerpt: str = "",
     memory_excerpt: str = "",
     improvements_excerpt: str = "",
+    internal_context: str = "",
 ) -> str:
     return f"""Contexto del repo (extractos):
 
@@ -91,10 +98,14 @@ def leader_user_message(
 --- Auto-mejoras pendientes ---
 {improvements_excerpt or "No hay auto-mejoras pendientes."}
 
+--- Contexto interno de ejecución y reutilización de skills ---
+{internal_context or "Sin contexto interno adicional."}
+
 --- Feature en curso ---
 {feature_block}
 
 Tarea: escribe un plan de sesión breve (viñetas) para que el implementador ejecute SOLO esta feature.
+Primero decide si debe reutilizar una skill existente, extenderla o crear una nueva. Estructura el plan en pasos, tareas y subtareas.
 No pegues bloques enormes de código: indica intención y archivos."""
 
 
@@ -105,6 +116,7 @@ def implementer_user_message(
     architecture_excerpt: str,
     conventions_excerpt: str,
     memory_excerpt: str = "",
+    internal_context: str = "",
     previous_feedback: str | None = None,
 ) -> str:
     feedback_section = ""
@@ -127,8 +139,11 @@ def implementer_user_message(
 
 --- Memoria mínima útil para esta subtarea ---
 {memory_excerpt or "Sin memoria adicional relevante."}
+
+--- Contexto interno de ejecución y reutilización de skills ---
+{internal_context or "Sin contexto interno adicional."}
 {feedback_section}
-Redacta el informe de implementación para esta única feature."""
+Redacta el informe de implementación para esta única feature. Si una skill existente resuelve la tarea, implementa solo el conector/adaptador necesario y evita crear una skill duplicada."""
 
 
 def reviewer_user_message(

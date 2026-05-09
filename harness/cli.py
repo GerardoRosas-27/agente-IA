@@ -19,6 +19,7 @@ from harness.shared_memory import (
     shared_memory_context,
     skill_memory_context,
 )
+from harness.tool_learning import internal_execution_context, learned_tools_context, learn_tool_outcome
 
 
 def _cmd_init(_args: argparse.Namespace) -> int:
@@ -59,6 +60,28 @@ def _cmd_memory(args: argparse.Namespace) -> int:
     print(skill_memory_context(limit=args.limit))
     print("\nAuto-mejoras pendientes:")
     print(self_improvement_context(limit=args.limit))
+    return 0
+
+
+def _cmd_tools(args: argparse.Namespace) -> int:
+    if args.learn:
+        if not args.skill or not args.use_case:
+            print("ERROR: --skill y --use-case son obligatorios con --learn")
+            return 1
+        learn_tool_outcome(
+            args.skill,
+            args.use_case,
+            args.instructions or "",
+            success=not args.failure,
+            outcome=args.outcome or ("éxito registrado" if not args.failure else "fallo registrado"),
+        )
+        print(f"Aprendizaje registrado para skill `{args.skill}`.")
+        return 0
+
+    if args.internal_context:
+        print(internal_execution_context(args.goal or ""))
+    else:
+        print(learned_tools_context(args.goal or "", limit=args.limit))
     return 0
 
 
@@ -125,6 +148,18 @@ def build_parser() -> argparse.ArgumentParser:
     s_mem.add_argument("--query", default="", help="Filtro textual opcional")
     s_mem.add_argument("--limit", type=int, default=10)
     s_mem.set_defaults(func=_cmd_memory)
+
+    s_tools = sub.add_parser("tools", help="Recomienda o registra uso aprendido de skills")
+    s_tools.add_argument("goal", nargs="?", default="", help="Objetivo para recomendar herramientas existentes")
+    s_tools.add_argument("--limit", type=int, default=3)
+    s_tools.add_argument("--learn", action="store_true", help="Registra feedback de uso de una skill")
+    s_tools.add_argument("--skill", default="", help="Nombre de la skill usada")
+    s_tools.add_argument("--use-case", default="", help="Caso de uso aprendido")
+    s_tools.add_argument("--instructions", default="", help="Cómo se invoca o usa la skill")
+    s_tools.add_argument("--outcome", default="", help="Resultado observado")
+    s_tools.add_argument("--failure", action="store_true", help="Marca el aprendizaje como fallo")
+    s_tools.add_argument("--internal-context", action="store_true", help="Muestra plan interno de reutilización/creación")
+    s_tools.set_defaults(func=_cmd_tools)
 
     s_run = sub.add_parser("run", help="Un ciclo sobre la siguiente feature (o la in_progress)")
     s_run.add_argument(

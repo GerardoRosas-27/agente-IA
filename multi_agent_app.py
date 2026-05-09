@@ -17,6 +17,9 @@ from harness.paths import FEATURE_LIST_PATH
 from harness.shared_memory import list_self_improvements
 from harness.skill_registry import is_skill_enabled, set_skill_enabled, sync_skills
 from harness.skill_runtime import get_runtime_status
+from harness.tool_learning import learned_tools_context
+from skills.node_execution_environment import create_viewer_window as create_node_viewer_window
+from skills.python_execution_environment import create_viewer_window as create_python_viewer_window
 from skills.whatsapp_connector import handle_input_command, parse_whatsapp_command
 
 
@@ -300,6 +303,14 @@ def main() -> None:
         ).pack(side="left")
         refresh_improvements()
 
+    def open_python_environment_window() -> None:
+        """Abre el monitor read-only del entorno Python."""
+        create_python_viewer_window(root)
+
+    def open_node_environment_window() -> None:
+        """Abre el monitor read-only del entorno Node.js."""
+        create_node_viewer_window(root)
+
     log = scrolledtext.ScrolledText(
         root,
         wrap=tk.WORD,
@@ -352,6 +363,7 @@ def main() -> None:
                         # Una solicitud nueva del usuario se divide en subtareas y debe
                         # continuar hasta cerrar la cola completa o encontrar un fallo.
                         busy["continuous"] = True
+                        emit(learned_tools_context(goal))
                         emit(f"Expandiendo objetivo: {goal}")
                         added = expand_features_from_goal(
                             user_goal=goal,
@@ -469,6 +481,24 @@ def main() -> None:
         text="Auto-mejoras",
         command=open_self_improvements_window,
         bg="#a16207",
+        fg="white",
+        relief="flat",
+        padx=12,
+    ).pack(side="left", padx=(10, 0))
+    tk.Button(
+        row,
+        text="Entorno Python",
+        command=open_python_environment_window,
+        bg="#0e7490",
+        fg="white",
+        relief="flat",
+        padx=12,
+    ).pack(side="left", padx=(10, 0))
+    tk.Button(
+        row,
+        text="Entorno Node",
+        command=open_node_environment_window,
+        bg="#15803d",
         fg="white",
         relief="flat",
         padx=12,
