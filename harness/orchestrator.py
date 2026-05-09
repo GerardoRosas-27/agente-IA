@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from harness.auto_training import record_user_session_training
 from harness.feature_store import (
     USER_TASK_ORIGIN,
     is_user_task,
@@ -529,6 +530,15 @@ def expand_features_from_goal(
             except (TypeError, ValueError):
                 pass
 
+    internal_x = internal_execution_context(user_goal)
+    remember(
+        "preflight_neural_context",
+        f"preflight_{stamp_summary()}",
+        internal_x,
+        tags=["preflight", "neural_router", "user_goal"],
+        confidence=0.96,
+    )
+
     new_items = None
     last_error = None
     
@@ -536,7 +546,11 @@ def expand_features_from_goal(
         raw = invoke_llm(
             model,
             prompts.INIT_EXPAND_SYSTEM,
-            prompts.initializer_user_message(user_goal=user_goal, max_existing_id=max_id),
+            prompts.initializer_user_message(
+                user_goal=user_goal,
+                max_existing_id=max_id,
+                internal_context=internal_x,
+            ),
             llm_chat=llm_chat,
             num_predict=num_predict,
             temperature=0.4,
@@ -592,6 +606,10 @@ def expand_features_from_goal(
         f"Objetivo expandido en {added} feature(s): {user_goal}",
         tags=["goal", "initializer"],
         confidence=0.9,
+    )
+    record_user_session_training(
+        user_goal,
+        outcome=f"expanded_into_{added}_features",
     )
     _append_history_line(
         f"- **{stamp_summary()}** inicializador: +{added} features desde objetivo de usuario."

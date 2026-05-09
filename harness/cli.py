@@ -8,6 +8,7 @@ from pathlib import Path
 
 from llm_api_client import resolve_llm_chat_for_pipeline
 
+from harness.auto_training import latest_training_context, run_training_cycle
 from harness.feature_store import (
     load_feature_list,
     validate_feature_list,
@@ -20,6 +21,7 @@ from harness.shared_memory import (
     skill_memory_context,
 )
 from harness.tool_learning import internal_execution_context, learned_tools_context, learn_tool_outcome
+from harness.training_dataset import generate_tool_routing_dataset, generate_user_task_dataset, train_from_dataset
 
 
 def _cmd_init(_args: argparse.Namespace) -> int:
@@ -60,6 +62,8 @@ def _cmd_memory(args: argparse.Namespace) -> int:
     print(skill_memory_context(limit=args.limit))
     print("\nAuto-mejoras pendientes:")
     print(self_improvement_context(limit=args.limit))
+    print("\nAutoentrenamientos recientes:")
+    print(latest_training_context(limit=args.limit))
     return 0
 
 
@@ -83,6 +87,64 @@ def _cmd_tools(args: argparse.Namespace) -> int:
     else:
         print(learned_tools_context(args.goal or "", limit=args.limit))
     return 0
+
+
+def _cmd_train(args: argparse.Namespace) -> int:
+    result = run_training_cycle(args.goal)
+    print(f"Tarea creada: {result.task.task_id}")
+    print(f"Decisión: {result.plan.decision}")
+    print(f"Herramientas: {', '.join(result.plan.tools_to_use) if result.plan.tools_to_use else '(ninguna)'}")
+    print(f"Reporte: {result.report_path}")
+    print("\nTareas:")
+    for task in result.plan.tasks:
+        print(f"  - {task}")
+    print("\nSubtareas:")
+    for subtask in result.plan.subtasks:
+        print(f"  - {subtask}")
+    print("\nSolución de código sugerida:")
+    print(result.plan.code_solution)
+    return 0
+
+
+def _cmd_dataset(args: argparse.Namespace) -> int:
+    path = Path(args.path) if args.path else None
+    if args.action == "generate":
+        if path is None:
+            stats = generate_tool_routing_dataset(target_tokens=args.target_tokens, seed=args.seed)
+        else:
+            stats = generate_tool_routing_dataset(
+                output_path=path,
+                target_tokens=args.target_tokens,
+                seed=args.seed,
+            )
+        print(f"Dataset: {stats.path}")
+        print(f"Ejemplos: {stats.examples}")
+        print(f"Tokens aproximados: {stats.approx_tokens}")
+        return 0
+
+    if args.action == "generate-user-tasks":
+        if path is None:
+            stats = generate_user_task_dataset(examples=args.examples, seed=args.seed)
+        else:
+            stats = generate_user_task_dataset(output_path=path, examples=args.examples, seed=args.seed)
+        print(f"Dataset: {stats.path}")
+        print(f"Ejemplos: {stats.examples}")
+        print(f"Tokens aproximados: {stats.approx_tokens}")
+        return 0
+
+    if args.action == "train":
+        if path is None:
+            stats = train_from_dataset(max_examples=args.max_examples)
+        else:
+            stats = train_from_dataset(dataset_path=path, max_examples=args.max_examples)
+        print(f"Dataset entrenado: {stats.path}")
+        print(f"Ejemplos disponibles: {stats.examples}")
+        print(f"Ejemplos entrenados: {stats.trained_examples}")
+        print(f"Skills entrenadas: {', '.join(stats.trained_skills)}")
+        return 0
+
+    print("ERROR: acción inválida. Usa generate o train.")
+    return 1
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -160,6 +222,19 @@ def build_parser() -> argparse.ArgumentParser:
     s_tools.add_argument("--failure", action="store_true", help="Marca el aprendizaje como fallo")
     s_tools.add_argument("--internal-context", action="store_true", help="Muestra plan interno de reutilización/creación")
     s_tools.set_defaults(func=_cmd_tools)
+
+    s_train = sub.add_parser("auto-train", help="Ejecuta un ciclo de autoaprendizaje en runtime")
+    s_train.add_argument("goal", help="Objetivo/tarea de entrenamiento")
+    s_train.set_defaults(func=_cmd_train)
+
+    s_dataset = sub.add_parser("training-dataset", help="Genera/entrena dataset sintético de tareas")
+    s_dataset.add_argument("action", choices=["generate", "generate-user-tasks", "train"])
+    s_dataset.add_argument("--path", default="", help="Ruta opcional del JSONL")
+    s_dataset.add_argument("--target-tokens", type=int, default=2_000_000)
+    s_dataset.add_argument("--examples", type=int, default=20_000)
+    s_dataset.add_argument("--seed", type=int, default=17)
+    s_dataset.add_argument("--max-examples", type=int, default=None)
+    s_dataset.set_defaults(func=_cmd_dataset)
 
     s_run = sub.add_parser("run", help="Un ciclo sobre la siguiente feature (o la in_progress)")
     s_run.add_argument(

@@ -30,3 +30,15 @@ def test_implementer_prompt_tells_agent_not_to_duplicate_skills():
     assert "evita crear una skill duplicada" in message
     assert "energía_libre" in message
     assert "internet_search_api" in message
+
+
+def test_initializer_prompt_receives_neural_context():
+    message = prompts.initializer_user_message(
+        user_goal="crear buscador web",
+        max_existing_id=10,
+        internal_context="REUSE_EXISTING_SKILL internet_search_api",
+    )
+
+    assert "Contexto interno de red neuronal" in message
+    assert "internet_search_api" in message
+    assert "crear buscador web" in message

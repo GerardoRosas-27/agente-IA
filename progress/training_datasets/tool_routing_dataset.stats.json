@@ -1,0 +1,7 @@
+{
+  "path": "C:\\python\\agenteIA\\progress\\training_datasets\\tool_routing_dataset.jsonl",
+  "examples": 17875,
+  "approx_tokens": 2000106,
+  "trained_examples": 0,
+  "trained_skills": []
+}

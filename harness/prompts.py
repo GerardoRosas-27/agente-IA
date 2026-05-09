@@ -66,6 +66,7 @@ Luego Markdown con checklist y motivos. Responde en español."""
 
 INIT_EXPAND_SYSTEM = """Eres un agente INICIALIZADOR. Dado un objetivo de producto en lenguaje natural,
 produces una lista JSON de nuevas features para añadir al proyecto. Cada feature debe ser verificable y acotada.
+Antes de crear features para una herramienta nueva, consulta el contexto interno de ejecución: si ya existe una skill útil, genera features de integración/adaptador y pruebas, no una skill duplicada.
 Responde SOLO con un array JSON (sin markdown fence), elementos con forma:
 {"id": <entero único sugerido>, "name": "snake_case", "title": "...", "description": "...", "acceptance": ["..."], "status": "pending"}
 Los ids deben ser mayores que el `max_id` que te damos en el user message."""
@@ -172,9 +173,15 @@ def reviewer_user_message(
 Evalúa. Primera línea: VERDICT: PASS o VERDICT: FAIL."""
 
 
-def initializer_user_message(*, user_goal: str, max_existing_id: int) -> str:
+def initializer_user_message(
+    *,
+    user_goal: str,
+    max_existing_id: int,
+    internal_context: str = "",
+) -> str:
     return (
         f"max_id existente en el proyecto: {max_existing_id}\n\n"
+        f"Contexto interno de red neuronal / reutilización:\n{internal_context or 'Sin contexto interno adicional.'}\n\n"
         f"Objetivo / especificación del usuario:\n{user_goal}\n\n"
         "Devuelve solo el array JSON de nuevas features (status siempre pending)."
     )

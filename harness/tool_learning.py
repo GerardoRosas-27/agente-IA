@@ -18,6 +18,16 @@ from harness.skill_registry import SkillRecord, sync_skills
 
 TOKEN_RE = re.compile(r"[a-z0-9_áéíóúñ]+", re.IGNORECASE)
 
+SKILL_DOMAIN_TOKENS = {
+    "internet_search_api": {"internet", "web", "buscar", "búsqueda", "fuentes", "url", "http", "resultados"},
+    "python_execution_environment": {"python", "py", "programa", "pytest"},
+    "node_execution_environment": {"node", "nodejs", "javascript", "js", "inspector", "debuggear", "debug"},
+    "whatsapp_connector": {"whatsapp", "wa", "mensaje", "webhook", "teléfono", "telefono"},
+    "wa_business_api_client": {"meta", "graph", "cloud", "api", "token", "business"},
+    "arithmetic_calculator": {"calcular", "suma", "resta", "multiplicación", "multiplicacion", "división", "division"},
+    "qr_scan_handler": {"qr", "escaneo", "scan", "scanner", "timeout"},
+}
+
 
 @dataclass(frozen=True)
 class ToolRecommendation:
@@ -188,6 +198,26 @@ class TinyToolNeuralRouter:
         return min(overlap / max(len(query_tokens), 1), 1.0)
 
     @staticmethod
+    def _usage_lexical_score(examples: list[_UsageExample], query_tokens: set[str]) -> float:
+        if not query_tokens or not examples:
+            return 0.0
+        best = 0.0
+        for example in examples[:40]:
+            tokens = _tokenize(f"{example.use_case} {example.instructions}")
+            if not tokens:
+                continue
+            best = max(best, len(query_tokens & tokens) / max(len(query_tokens), 1))
+        return min(best, 1.0)
+
+    @staticmethod
+    def _domain_score(skill_name: str, query_tokens: set[str]) -> float:
+        domain_tokens = SKILL_DOMAIN_TOKENS.get(skill_name, set())
+        if not query_tokens or not domain_tokens:
+            return 0.0
+        overlap = len(query_tokens & domain_tokens)
+        return min(overlap / 2, 1.0)
+
+    @staticmethod
     def _usage_target(examples: list[_UsageExample], lexical: float) -> float:
         if not examples:
             return lexical
@@ -216,15 +246,20 @@ class TinyToolNeuralRouter:
         scored: list[ToolRecommendation] = []
         for record in self.records:
             neural = self._neural_score(record.name, query_tokens)
-            lexical = self._lexical_score(record, query_tokens)
             examples = usage_by_skill.get(record.name, [])
+            domain = self._domain_score(record.name, query_tokens)
+            lexical = max(
+                self._lexical_score(record, query_tokens),
+                self._usage_lexical_score(examples, query_tokens),
+                domain,
+            )
             target = self._usage_target(examples, lexical)
             energy = _free_energy(
                 prediction=neural,
                 target=target,
                 complexity=self._complexity_penalty(record, examples, lexical),
             )
-            base_score = (0.45 * neural) + (0.25 * lexical) + (0.30 * target)
+            base_score = (0.40 * neural) + (0.25 * lexical) + (0.25 * target) + (0.10 * domain)
             score = _clamp(base_score * (1.0 - min(energy.free_energy, 0.55)))
             known_cases = tuple(example.use_case for example in examples[:3])
             best_instructions = (
@@ -299,13 +334,14 @@ def build_tool_reuse_plan(
     goal: str,
     *,
     limit: int = 4,
-    reuse_threshold: float = 0.40,
+    reuse_threshold: float = 0.35,
     db_path: Path = STATE_DB_PATH,
 ) -> ToolReusePlan:
     recommendations = recommend_tools_for_goal(goal, limit=limit, db_path=db_path)
     top = recommendations[0] if recommendations else None
-    low_energy_reuse = bool(top and top.score >= 0.35 and top.free_energy <= 0.40)
-    if top and (top.score >= reuse_threshold or low_energy_reuse):
+    low_energy_reuse = bool(top and top.score >= 0.30 and top.free_energy <= 0.40)
+    lexical_reuse = bool(top and top.score >= 0.30 and "coincide con el objetivo" in top.why)
+    if top and (top.score >= reuse_threshold or low_energy_reuse or lexical_reuse):
         decision = "REUSE_EXISTING_SKILL"
         rationale = (
             f"La skill `{top.skill_name}` parece cubrir la tarea con score={top.score:.2f}. "
@@ -374,7 +410,7 @@ def internal_execution_context(
                 f"energía_libre={item.free_energy:.2f}. {item.why}. Uso: {item.how_to_use} Casos: {cases}."
             )
     else:
-        lines.append("- Ninguna skill candidata con confianza suficiente.")
+        lines.append("- Ninguna skill candidata con confianza suficiente; energía_libre no calculada.")
 
     lines.extend(["", "### Pasos internos obligatorios"])
     lines.extend(f"- {step}" for step in plan.steps)

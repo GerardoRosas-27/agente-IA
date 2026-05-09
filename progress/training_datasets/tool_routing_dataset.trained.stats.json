@@ -1,0 +1,15 @@
+{
+  "path": "C:\\python\\agenteIA\\progress\\training_datasets\\tool_routing_dataset.jsonl",
+  "examples": 17875,
+  "approx_tokens": 2000106,
+  "trained_examples": 17875,
+  "trained_skills": [
+    "arithmetic_calculator",
+    "internet_search_api",
+    "node_execution_environment",
+    "python_execution_environment",
+    "qr_scan_handler",
+    "wa_business_api_client",
+    "whatsapp_connector"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "path": "progress\\training_datasets\\user_requested_tasks_dataset.jsonl",
+  "examples": 20000,
+  "approx_tokens": 2288878,
+  "trained_examples": 20000,
+  "trained_skills": [
+    "arithmetic_calculator",
+    "internet_search_api",
+    "node_execution_environment",
+    "python_execution_environment",
+    "qr_scan_handler",
+    "wa_business_api_client",
+    "whatsapp_connector"
+  ]
+}
