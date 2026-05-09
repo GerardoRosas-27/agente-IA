@@ -349,6 +349,9 @@ def main() -> None:
                         emit(whatsapp_result.detail)
                         root.after(0, lambda: goal_entry.delete(0, tk.END))
                     else:
+                        # Una solicitud nueva del usuario se divide en subtareas y debe
+                        # continuar hasta cerrar la cola completa o encontrar un fallo.
+                        busy["continuous"] = True
                         emit(f"Expandiendo objetivo: {goal}")
                         added = expand_features_from_goal(
                             user_goal=goal,

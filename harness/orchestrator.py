@@ -156,22 +156,50 @@ def _apply_code_blocks(text: str) -> list[str]:
     return saved_files
 
 
-def _run_bash_blocks(text: str, log: Callable[[str], None]) -> None:
+def _normalize_shell_command(command: str) -> list[str]:
+    stripped = command.strip()
+    if stripped.startswith("pytest "):
+        return [sys.executable, "-m", "pytest", *stripped.split()[1:]]
+    if stripped == "pytest":
+        return [sys.executable, "-m", "pytest"]
+    if stripped.startswith("python "):
+        return [sys.executable, *stripped.split()[1:]]
+    return ["cmd", "/c", stripped] if sys.platform == "win32" else ["bash", "-c", stripped]
+
+
+def _run_bash_blocks(text: str, log: Callable[[str], None]) -> tuple[bool, str]:
     import re
     root = Path(__file__).resolve().parent.parent
     pattern = r"```bash\n(.*?)```"
     matches = re.finditer(pattern, text, re.DOTALL)
+    ok = True
+    reports: list[str] = []
     for m in matches:
-        cmd_str = m.group(1).strip()
-        if not cmd_str:
+        raw_block = m.group(1).strip()
+        if not raw_block:
             continue
-        log(f"Ejecutando dependencias/comandos bash:\n{cmd_str}")
-        try:
-            cmd = ["cmd", "/c", cmd_str] if sys.platform == "win32" else ["bash", "-c", cmd_str]
-            r = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=180)
-            log(f"Salida bash (Exit {r.returncode}):\n{r.stdout}\n{r.stderr}")
-        except Exception as e:
-            log(f"Error ejecutando bash: {e}")
+        commands = [
+            line.strip()
+            for line in raw_block.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        for cmd_str in commands:
+            log(f"Ejecutando dependencias/comandos bash:\n{cmd_str}")
+            try:
+                cmd = _normalize_shell_command(cmd_str)
+                r = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=180)
+                report = f"$ {cmd_str}\nExit code: {r.returncode}\n{r.stdout}\n{r.stderr}".strip()
+                reports.append(report)
+                log(f"Salida bash (Exit {r.returncode}):\n{r.stdout}\n{r.stderr}")
+                if r.returncode != 0:
+                    ok = False
+            except Exception as e:
+                ok = False
+                reports.append(f"$ {cmd_str}\nError ejecutando bash: {e}")
+                log(f"Error ejecutando bash: {e}")
+    if not reports:
+        return True, "No hubo bloques bash para ejecutar."
+    return ok, "\n\n".join(reports)
 
 
 def _module_name_from_path(rel_path: str) -> str | None:
@@ -340,7 +368,7 @@ def run_one_feature_cycle(
         else:
             log("No se detectaron bloques de código para guardar.")
 
-        _run_bash_blocks(impl_body, log)
+        bash_ok, bash_output = _run_bash_blocks(impl_body, log)
 
         log("Validando archivos creados/modificados…")
         validation_output = _validate_saved_files(saved_files)
@@ -356,6 +384,8 @@ def run_one_feature_cycle(
         log("Ejecutando tests automatizados…")
         test_output = _run_tests()
         test_output = (
+            "## Comandos bash del implementador\n"
+            f"{bash_output}\n\n"
             "## Validación de archivos creados\n"
             f"{validation_output}\n\n"
             "## Pytest\n"
@@ -384,6 +414,9 @@ def run_one_feature_cycle(
         )
 
         verdict = parse_verdict(review_body)
+        if verdict is True and not bash_ok:
+            verdict = False
+            review_body += "\n\nVEREDICTO SOBRESCRITO POR HARNESS: fallaron comandos bash del implementador."
         if verdict is True:
             break
         else:

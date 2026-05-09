@@ -61,3 +61,18 @@
 ## [2026-05-07T14:47:10] Entrada
 
 - **2026-05-07T14:47:10** feature `basic_operations` (id=5) → **DONE**. Ver `impl_basic_operations.md` y `review_basic_operations.md`.
+
+
+## [2026-05-09T15:42:27] Entrada
+
+- **2026-05-09T15:42:27** inicializador: +7 features desde objetivo de usuario.
+
+
+## [2026-05-09T15:46:51] Entrada
+
+- **2026-05-09T15:46:51** feature `whatsapp_number_setup` (id=9) → **DONE**. Ver `impl_whatsapp_number_setup.md` y `review_whatsapp_number_setup.md`.
+
+
+## [2026-05-09T15:52:05] Entrada
+
+- **2026-05-09T15:52:05** feature `whatsapp_message_listener` (id=10) → **FAIL** (pending de nuevo). Motivo en `review_whatsapp_message_listener.md`.

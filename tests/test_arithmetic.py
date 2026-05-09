@@ -1,5 +1,12 @@
 import pytest
-from skills.arithmetic_calculator import calculate
+from skills.arithmetic_calculator import (
+    ArithmeticCalculatorSkill,
+    calculate,
+    calculate_and_display,
+    handle_input_command,
+    parse_number,
+    prompt_for_number,
+)
 
 # Testes positivos requeridos por la Feature ID 5
 def test_addition():
@@ -36,3 +43,40 @@ def test_float_precision():
     """Verificar que las operaciones con floats funcionen correctamente."""
     # Prueba de un resultado decimal esperado
     assert calculate(7, 3, '/') == pytest.approx(2.3333333333333335)
+
+
+def test_parse_number_rejects_text():
+    with pytest.raises(ValueError):
+        parse_number("hola")
+    assert parse_number("5.5") == 5.5
+    assert parse_number("-3") == -3
+
+
+def test_prompt_for_number_retries_until_valid():
+    inputs = iter(["hola", "5.5"])
+    messages = []
+    result = prompt_for_number(
+        "Numero: ",
+        input_func=lambda _prompt: next(inputs),
+        output_func=messages.append,
+    )
+    assert result == 5.5
+    assert messages
+
+
+def test_calculate_and_display():
+    assert calculate_and_display(10, 5, "+") == "El resultado es: 15"
+
+
+def test_skill_structured_request():
+    result = ArithmeticCalculatorSkill().run({"num1": "10", "operator": "+", "num2": 5})
+    assert result["ok"] is True
+    assert result["result"] == 15
+    assert result["message"] == "El resultado es: 15"
+
+
+def test_handle_input_command():
+    result = handle_input_command("calc 10 + 5")
+    assert result is not None
+    assert result["result"] == 15
+    assert handle_input_command("haz otra cosa") is None

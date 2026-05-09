@@ -451,3 +451,119 @@ Antes de considerar la feature como lista para revisión, se deben ejecutar las 
 
 ---
 *(Al completar estas tres subtareas y superar las validaciones, se creará `progress/basic_operations.md` listo para pasar al Revisor.)*
+
+
+## [2026-05-09T15:43:01] Líder · feature 9
+
+Hola. He revisado el contexto del repositorio y la feature activa. Confirmamos que estamos en un ciclo de **CREACIÓN/HERRAMIENTA**.
+
+El objetivo es implementar la lógica completa para conectar, autenticar e interactuar con la API de WhatsApp Business, lo cual requiere modificar o expandir las habilidades existentes.
+
+Como LÍDER, mi plan está diseñado para el Implementador y garantiza que todo artefacto intermedio se guarde en `progress/` y el componente final residirá en `skills/`.
+
+---
+
+### ⚙️ Feature ID 9: Configuración del número de WhatsApp Business API
+**Tipo de Ciclo:** CREACIÓN/HERRAMIENTA.
+**Objetivo Primario:** Implementar la lógica robusta para autenticar un número con WhatsApp Business API y realizar pruebas funcionales de envío/recepción.
+
+#### 📜 Plan de Sesión (Para el Implementador)
+
+El trabajo debe dividirse en tres fases: Interfaz, Lógica Central y Validación.
+
+**Fase I: Preparación y Refactorización del Artefacto Base**
+1.  **Revisar Dependencias:** Revisar `skills/whatsapp_connector.py` para entender el flujo actual de manejo de credenciales (`WHATSAPP_*`). Determinar si la lógica de conexión debería vivir en una clase dedicada o extender `whatsapp_connector`. *Propongo crear un nuevo módulo: `skills/wa_business_api_client.py`.*
+2.  **Esqueleto del Cliente:** Crear el esqueleto inicial para `wa_business_api_client.py`. Este debe contener métodos abstractos como `initialize_connection()` y `send_test_message(to, message)`.
+3.  **Guardar Progreso:** Se guardará la estructura de archivos en `progress/initial_setup_9.md`.
+
+**Fase II: Implementación del Flujo Lógico (El Núcleo)**
+1.  **Autenticación (`initialize_connection`):** Implementar el método que utilice las variables de entorno (`WHATSAPP_ACCESS_TOKEN`, etc.) para inicializar la sesión con la API de Meta/WhatsApp Cloud API. Debe incluir manejo de errores específicos de la API (e.g., Token inválido, Número no registrado).
+2.  **Envío de Prueba:** Implementar `send_test_message`. Este método debe encapsular el envío de un mensaje desde el sistema hacia un número de prueba y manejar la respuesta esperada del *endpoint* de WhatsApp.
+3.  **Manejo de Sesión (Receiving):** Actualizar el cliente para que, idealmente, registre cómo se deberían procesar los webhooks entrantes. Aunque no es código ejecutable ahora, debe quedar la estructura base en `skills/wa_business_api_client.py` indicando dónde se espera el *callback* del webhook.
+4.  **Integración de Skills:** Actualizar las referencias necesarias dentro de `whatsapp_connector.py` para que puedan invocar y validar la funcionalidad del nuevo cliente (`wa_business_api_client`).
+5.  **Guardar Progreso:** Se guardará la lógica central implementada en `progress/logic_implementation_9.md`.
+
+**Fase III: Pruebas de Validación (Obligatorio)**
+
+Antes de considerar esta feature terminada, se deben ejecutar las siguientes pruebas unitarias y de flujo:
+
+1.  **Prueba 3.1: Conexión Exitosa (Happy Path):**
+    *   *Input:* Credenciales API válidas y un número de destino válido.
+    *   *Expected Output:* El método debe devolver `True` o un objeto de éxito, y el mensaje de prueba debe estar en cola/enviado exitosamente a la capa de la API (sin requerir que el usuario verifique manualmente).
+2.  **Prueba 3.2: Credenciales Inválidas:**
+    *   *Input:* `WHATSAPP_ACCESS_TOKEN` con valor incorrecto o expirado.
+    *   *Expected Output:* El método debe capturar la excepción de API y lanzar una excepción controlada (ej: `APIAuthenticationError`) que indique claramente al usuario qué credencial falló, sin exponer secretos.
+3.  **Prueba 3.3: Número No Encontrable:**
+    *   *Input:* Credenciales válidas, pero el número del destinatario no es válido o está bloqueado en la API de WhatsApp.
+    *   *Expected Output:* El método debe fallar graciosamente con un mensaje específico que guíe al usuario a corregir el número destino.
+
+***
+
+**Resumen para la Implementación:**
+*   **Crear/Modificar:** `skills/wa_business_api_client.py` (Principal) y potencialmente actualizar `skills/whatsapp_connector.py`.
+*   **Guardado Intermedio:** Utilizar `progress/` para cada hito (Esqueleto $\rightarrow$ Lógica $\rightarrow$ Pruebas).
+
+Por favor, comienza con la Fase I siguiendo este plan detallado. Estoy pendiente de los archivos generados en `progress/`.
+
+
+## [2026-05-09T15:47:24] Líder · feature 10
+
+El tipo de ciclo activo es **CREACIÓN/HERRAMIENTA**.
+
+Procederemos con la planificación detallada para el Implementador, asegurando que cada paso genere artefactos guardables en `progress/` y culminen con pruebas de validación claras.
+
+***
+
+### 💡 Planificación de Sesión: `whatsapp_message_listener` (Implementador)
+
+**Objetivo:** Crear un *endpoint* robusto y desacoplado capaz de recibir, parsear y normalizar todos los mensajes entrantes vía Webhook de WhatsApp Business API.
+
+#### Fase 1: Arquitectura del Receptor Webhook (Stubs & Configuración)
+Esta fase establece el punto de entrada del servicio y su contrato con la plataforma Meta/WhatsApp.
+
+*   **Tarea 1.1: Definición del EndPoint:** Crear o actualizar un *endpoint* dedicado en la capa API (Asumimos `api_endpoints/whatsapp_hook.py`). Este debe ser capaz de recibir peticiones POST sin validar contenido, solo asegurando que el proceso está activo y escuchando.
+    *   **Artefacto a generar:** Estructura inicial del *handler*.
+    *   **Archivos afectados:** `progress/implementer_10.md`, (Nuevo archivo o actualización en) `api_endpoints/whatsapp_hook.py`.
+*   **Tarea 1.2: Manejo de la Verificación (GET):** Implementar el manejo del parámetro `hub.challenge` para responder correctamente a la verificación inicial de Webhooks (el *handshake*).
+
+#### Fase 2: Parsing y Normalización de Payload (Lógica Central)
+Una vez que el webhook está activo, debemos leer y estructurar los datos. Los payloads de WhatsApp son complejos y varían según el tipo de mensaje (texto, imagen, estado, etc.).
+
+*   **Tarea 2.1: Identificación del Mensaje:** Implementar la lógica para identificar si el payload contiene un evento de mensaje (`message`) o es otro tipo de notificación.
+    *   *Intención:* Aislar el cuerpo del mensaje y los metadatos (sender ID, timestamp).
+*   **Tarea 2.2: Extracción de Contenido:** Desarrollar funciones específicas para manejar tipos comunes:
+    1.  **Texto:** Extraer `body` de forma limpia.
+    2.  **Media:** Identificar la presencia de archivos adjuntos y generar un *placeholder* o una referencia URI al contenido binario, sin procesarlo aún (solo identificar que existe).
+    3.  **Remitente:** Asegurar la extracción del ID legible del remitente (`sender_id`).
+
+#### Fase 3: Integración con el Harness de Respuesta y Prueba
+La información capturada debe ser útil para el sistema central.
+
+*   **Tarea 3.1: Emisión de Evento Estructurado:** Modificar el *handler* principal para que, tras parsear un mensaje, no solo lo imprima, sino que emita un objeto Python/JSON estándar (ej.: `{"event_type": "message_received", "sender_id": ..., "content": ...}`) que pueda ser consumido por la capa de procesamiento central del harness.
+    *   **Documentación:** Actualizar la documentación en `docs/architecture.md` para detallar el nuevo *workflow* de recepción de mensajes.
+*   **Tarea 3.2: Creación de Pruebas Unitarias:** Crear pruebas exhaustivas que simulen payloads JSON reales recibidos por WhatsApp (texto, imagen, falla).
+
+***
+
+### 🧪 Plan de Validación y Aceptación (QA)
+
+La feature solo se considera terminada si pasan las siguientes validaciones automatizadas. Estas deben ser escritas en `tests/test_whatsapp_listener.py`.
+
+1.  **Validación del Handshake (`GET`):**
+    *   **Test:** Simular una petición `GET` de webhook con parámetros de verificación y asegurar que el *endpoint* responde con un código 200 OK y el valor correcto en el cuerpo.
+2.  **Validación de Mensaje de Texto (Payload JSON):**
+    *   **Input Mock:** Payload simulado para texto simple (`{"entry": [..., "message": {"type": "text", "text": "Hola"}} ]`).
+    *   **Expectativa:** El *handler* debe extraer correctamente el `sender_id` y el contenido de texto, emitiendo el objeto estandarizado.
+3.  **Validación de Mensaje Multimedia (Payload JSON):**
+    *   **Input Mock:** Payload simulado para imagen (`{"entry": [..., "message": {"type": "image", "image": {"id": "XYZ"}}]}`).
+    *   **Expectativa:** El *handler* debe detectar el tipo `image`, registrar la referencia del contenido y emitir un objeto estandarizado con `media_detected: true`.
+4.  **Validación de Robustez (Edge Cases):**
+    *   **Input Mock:** Payload malformado o nulo.
+    *   **Expectativa:** El *handler* debe registrar el error en los logs internos sin fallar ni caer en un estado 500, manteniendo la disponibilidad del endpoint.
+
+**Resumen de Entregables para el Implementador:**
+1.  Modificar/Crear `api_endpoints/whatsapp_hook.py`.
+2.  Actualizar documentación en `docs/architecture.md`.
+3.  Generar pruebas unitarias en `tests/test_whatsapp_listener.py`.
+
+Este plan desglosa el trabajo de alto nivel (recepción de mensajes) en módulos pequeños y verificables, cumpliendo con los estándares del harness. Por favor, avísame cuando estés listo para que yo pueda iniciar la revisión una vez que hayas guardado los avances en `progress/`.
