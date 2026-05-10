@@ -10,7 +10,7 @@
 | `harness/cli.py` | Comandos `init`, `validate`, `status`, `run`, `expand` |
 | `harness/tool_learning.py` | Recomendador aprendido de skills existentes; evita recrear herramientas ya disponibles |
 | `harness/repo_index.py` | Índice ligero por símbolos, imports y tokens para contexto de código |
-| `harness/agent_loop.py` | Loop observar → actuar → observar con herramientas controladas |
+| `harness/agent_loop.py` | Loop observar → actuar → observar con herramientas controladas, sesiones y checkpoints |
 | `harness/evaluator.py` | Checks objetivos para compilar, testear y bloquear comandos riesgosos |
 | `harness/benchmarks.py` | Benchmarks locales para medir capacidades del harness |
 | **`api_endpoints/whatsapp_hook.py`** | **Maneja la recepción, verificación y parsing de payloads Webhook externos (ej. WhatsApp).** |
@@ -43,6 +43,14 @@ más potente y seguro:
    el harness ejecuta esos tests antes de la suite completa.
 7. **Evidencia para revisión:** el revisor recibe archivos modificados, patches
    aplicados, bloques rechazados, comandos bash, validación de imports y pytest.
+
+## Modo agente
+
+`python -m harness.cli agent "objetivo"` ejecuta un loop de herramientas con
+estado persistente en `progress/agent_sessions/`. Cada observación se guarda
+para poder reanudar con `--resume`. Los patches se previsualizan por defecto y
+solo se aplican con `apply=true`; antes de aplicar se guarda un checkpoint con
+el diff previo y el patch solicitado.
 
 ## Flujo de Datos Externos: Recepción de Mensajes (WhatsApp Webhook)
 

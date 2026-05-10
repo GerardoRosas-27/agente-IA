@@ -31,6 +31,7 @@ Copia `.env.example` a `.env` y configura `LLM_API_BASE_URL` (debe terminar en `
 | `python -m harness.cli index "consulta"` | Busca contexto por símbolos/imports/texto |
 | `python -m harness.cli evaluate archivo.py` | Ejecuta checks objetivos sobre cambios |
 | `python -m harness.cli benchmark` | Mide capacidades locales del harness |
+| `python -m harness.cli agent "objetivo"` | Ejecuta un agente con herramientas, sesiones y checkpoints |
 
 También puedes usar `python -m harness` en lugar de `python -m harness.cli` (mismos subcomandos).
 
@@ -66,6 +67,18 @@ El harness ahora incluye diez piezas de infraestructura para acercarse a un agen
 8. Evidencia estructurada para el revisor.
 9. Benchmarks locales para medir regresiones de capacidades.
 10. CLI para indexar, evaluar y benchmarkear sin depender del chat.
+
+### Agente de código
+
+```bash
+python -m harness.cli agent "arregla el parser de webhook" --session webhook_fix
+python -m harness.cli agent --resume webhook_fix
+```
+
+El agente usa acciones JSON internas (`search`, `read`, `patch`, `test`,
+`command`, `done`). Los patches primero se previsualizan; solo se aplican si el
+modelo repite la acción con `apply=true`, y cada aplicación guarda un checkpoint
+en `progress/agent_sessions/checkpoints/`.
 
 ## Prueba opcional contra LM Studio real
 

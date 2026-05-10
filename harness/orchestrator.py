@@ -293,12 +293,12 @@ def _build_repo_context(feature: dict[str, Any], *, max_files: int = 12, max_cha
     return "\n".join(chunks) if chunks else "No se pudo leer contexto relevante."
 
 
-def _apply_code_blocks(text: str) -> ApplyResult:
+def _apply_code_blocks(text: str, *, root: Path | None = None) -> ApplyResult:
     # Busca bloques tipo ```python:ruta/archivo.py o ```ruta/archivo.py.
     # También acepta bloques unified diff como ```patch para cambios incrementales.
     saved_files: list[str] = []
     rejected: list[str] = []
-    root = _repo_root()
+    root = root or _repo_root()
     patch_files, patch_reports = _apply_patch_blocks(text, root)
     
     # Intento 1: Formato estricto ```python:ruta/archivo.py
