@@ -9,6 +9,10 @@
 | `harness/feature_store.py` | Carga/guardado atómico del JSON de features |
 | `harness/cli.py` | Comandos `init`, `validate`, `status`, `run`, `expand` |
 | `harness/tool_learning.py` | Recomendador aprendido de skills existentes; evita recrear herramientas ya disponibles |
+| `harness/repo_index.py` | Índice ligero por símbolos, imports y tokens para contexto de código |
+| `harness/agent_loop.py` | Loop observar → actuar → observar con herramientas controladas |
+| `harness/evaluator.py` | Checks objetivos para compilar, testear y bloquear comandos riesgosos |
+| `harness/benchmarks.py` | Benchmarks locales para medir capacidades del harness |
 | **`api_endpoints/whatsapp_hook.py`** | **Maneja la recepción, verificación y parsing de payloads Webhook externos (ej. WhatsApp).** |
 
 ## Flujo de un ciclo `run`

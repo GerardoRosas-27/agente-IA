@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -19,6 +20,21 @@ DEFAULT_LLM_API_BASE_URL = "http://192.168.0.4:1234/v1"
 DEFAULT_LLM_MODEL = "xiaomi-mimo-vl-miloco-7b"
 
 _ENV_LOADED = False
+
+
+@dataclass(frozen=True)
+class LLMProfile:
+    name: str
+    base_url: str
+    model: str
+    api_key: str
+    timeout: float
+    label: str
+
+
+def _env_name_for_profile(profile: str, suffix: str) -> str:
+    clean = "".join(ch if ch.isalnum() else "_" for ch in profile.upper()).strip("_")
+    return f"LLM_{clean}_{suffix}"
 
 
 def _load_env_file() -> None:
@@ -73,6 +89,41 @@ def get_resolved_model(cli_fallback: str = "") -> str:
     if c:
         return c
     return DEFAULT_LLM_MODEL
+
+
+def resolve_llm_profile(profile: str = "", *, cli_model: str = "") -> LLMProfile:
+    """Resuelve backend/modelo por perfil sin acoplar el harness a un único servidor."""
+    _load_env_file()
+    profile_name = (profile or os.getenv("LLM_PROFILE") or "default").strip() or "default"
+    if profile_name == "default":
+        base = (os.getenv("LLM_API_BASE_URL") or DEFAULT_LLM_API_BASE_URL).strip().rstrip("/")
+        model = (cli_model or os.getenv("LLM_MODEL") or DEFAULT_LLM_MODEL).strip()
+        api_key = (os.getenv("LLM_API_KEY") or "").strip()
+        timeout = float(os.getenv("LLM_HTTP_TIMEOUT", "300") or "300")
+    else:
+        base = (
+            os.getenv(_env_name_for_profile(profile_name, "API_BASE_URL"))
+            or os.getenv("LLM_API_BASE_URL")
+            or DEFAULT_LLM_API_BASE_URL
+        ).strip().rstrip("/")
+        model = (
+            cli_model
+            or os.getenv(_env_name_for_profile(profile_name, "MODEL"))
+            or os.getenv("LLM_MODEL")
+            or DEFAULT_LLM_MODEL
+        ).strip()
+        api_key = (
+            os.getenv(_env_name_for_profile(profile_name, "API_KEY"))
+            or os.getenv("LLM_API_KEY")
+            or ""
+        ).strip()
+        timeout = float(
+            os.getenv(_env_name_for_profile(profile_name, "HTTP_TIMEOUT"))
+            or os.getenv("LLM_HTTP_TIMEOUT", "300")
+            or "300"
+        )
+    label = f"LLM profile {profile_name} ({base})"
+    return LLMProfile(profile_name, base, model, api_key, timeout, label)
 
 
 def parse_assistant_message(r: Any) -> str | None:
@@ -252,14 +303,16 @@ def remote_openai_chat(
     POST /v1/chat/completions al único servidor configurado (LLM_API_BASE_URL).
     """
     _load_env_file()
-    primary = (os.getenv("LLM_API_BASE_URL") or DEFAULT_LLM_API_BASE_URL).strip().rstrip("/")
-    if not primary:
+    profile = resolve_llm_profile()
+    if not profile.base_url:
         return None
-
-    main_timeout = float(os.getenv("LLM_HTTP_TIMEOUT", "300") or "300")
-    api_key = (os.getenv("LLM_API_KEY") or "").strip()
     return _post_chat_completions(
-        primary, model, messages, options, timeout=main_timeout, api_key=api_key
+        profile.base_url,
+        model,
+        messages,
+        options,
+        timeout=profile.timeout,
+        api_key=profile.api_key,
     )
 
 
@@ -268,10 +321,9 @@ def resolve_llm_chat_for_pipeline(cli_model: str) -> tuple[Callable[..., Any], s
     Retorna (remote_openai_chat, model_id, etiqueta).
     Siempre la API de LM Studio (URL y modelo vía .env; hay valores por defecto en código).
     """
-    _load_env_file()
-    model_id = get_resolved_model(cli_model)
+    profile = resolve_llm_profile(cli_model=cli_model)
     return (
         remote_openai_chat,
-        model_id,
-        "LM Studio (API OpenAI)",
+        profile.model,
+        profile.label,
     )

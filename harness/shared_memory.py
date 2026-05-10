@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from harness.paths import STATE_DB_PATH
+
+
+TOKEN_RE = re.compile(r"[a-z0-9_áéíóúñ]+", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -132,6 +136,15 @@ def _row_to_memory(row: sqlite3.Row) -> MemoryItem:
     )
 
 
+def _tokens(text: str) -> set[str]:
+    tokens: set[str] = set()
+    for raw in TOKEN_RE.findall(text):
+        lowered = raw.lower()
+        parts = [lowered, *lowered.split("_")]
+        tokens.update(part for part in parts if len(part) >= 3)
+    return tokens
+
+
 def recall(
     *,
     scope: str | None = None,
@@ -158,6 +171,31 @@ def recall(
     with _connect(db_path) as conn:
         rows = conn.execute(sql, params).fetchall()
     return [_row_to_memory(row) for row in rows]
+
+
+def semantic_recall(
+    *,
+    query: str,
+    scope: str | None = None,
+    limit: int = 12,
+    db_path: Path = STATE_DB_PATH,
+) -> list[MemoryItem]:
+    """Recupera memorias por similitud léxica ponderada sin depender de embeddings externos."""
+    query_tokens = _tokens(query)
+    if not query_tokens:
+        return recall(scope=scope, limit=limit, db_path=db_path)
+    candidates = recall(scope=scope, limit=max(limit * 8, 50), db_path=db_path)
+    scored: list[tuple[float, MemoryItem]] = []
+    for item in candidates:
+        haystack = f"{item.scope} {item.key} {item.value} {' '.join(item.tags)}"
+        item_tokens = _tokens(haystack)
+        overlap = query_tokens & item_tokens
+        if not overlap:
+            continue
+        score = (len(overlap) / len(query_tokens)) + (0.15 * item.confidence)
+        scored.append((score, item))
+    scored.sort(key=lambda pair: (-pair[0], pair[1].updated_at), reverse=False)
+    return [item for _score, item in scored[: max(limit, 0)]]
 
 
 def record_skill_usage(
@@ -296,7 +334,7 @@ def list_self_improvements(
 
 def shared_memory_context(query: str = "", limit: int = 10, db_path: Path = STATE_DB_PATH) -> str:
     """Contexto compacto para el orquestador."""
-    memories = recall(query=query, limit=limit, db_path=db_path)
+    memories = semantic_recall(query=query, limit=limit, db_path=db_path) if query else recall(limit=limit, db_path=db_path)
     if not memories:
         return "No hay memoria compartida relevante todavía."
     return "\n".join(

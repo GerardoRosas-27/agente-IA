@@ -8,6 +8,8 @@ from pathlib import Path
 
 from llm_api_client import resolve_llm_chat_for_pipeline
 
+from harness.benchmarks import benchmark_summary, run_benchmarks
+from harness.evaluator import evaluate_changes
 from harness.auto_training import latest_training_context, run_training_cycle
 from harness.feature_store import (
     load_feature_list,
@@ -15,6 +17,8 @@ from harness.feature_store import (
 )
 from harness.orchestrator import expand_features_from_goal, run_one_feature_cycle
 from harness.paths import FEATURE_LIST_PATH
+from harness.paths import PROGRESS_DIR, REPO_ROOT
+from harness.repo_index import repo_context_for_goal
 from harness.shared_memory import (
     self_improvement_context,
     shared_memory_context,
@@ -105,6 +109,25 @@ def _cmd_train(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_index(args: argparse.Namespace) -> int:
+    print(repo_context_for_goal(args.query, root=REPO_ROOT, limit=args.limit))
+    return 0
+
+
+def _cmd_evaluate(args: argparse.Namespace) -> int:
+    result = evaluate_changes(args.files or [], commands=args.command or [], root=REPO_ROOT)
+    print(result.report)
+    return 0 if result.ok else 1
+
+
+def _cmd_benchmark(args: argparse.Namespace) -> int:
+    output = Path(args.output) if args.output else PROGRESS_DIR / "benchmarks" / "latest.json"
+    results = run_benchmarks(root=REPO_ROOT, output_path=output)
+    print(benchmark_summary(results))
+    print(f"Reporte: {output}")
+    return 0 if all(result.passed for result in results) else 1
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     llm_chat, model, label = resolve_llm_chat_for_pipeline(args.llm_model or "")
     print(f"LLM: {label} - modelo {model}")
@@ -184,6 +207,20 @@ def build_parser() -> argparse.ArgumentParser:
     s_train = sub.add_parser("auto-train", help="Ejecuta un ciclo de autoaprendizaje en runtime")
     s_train.add_argument("goal", help="Objetivo/tarea de entrenamiento")
     s_train.set_defaults(func=_cmd_train)
+
+    s_index = sub.add_parser("index", help="Busca contexto relevante en el indice del repo")
+    s_index.add_argument("query", help="Consulta para buscar en simbolos, imports y texto")
+    s_index.add_argument("--limit", type=int, default=8)
+    s_index.set_defaults(func=_cmd_index)
+
+    s_eval = sub.add_parser("evaluate", help="Evalua cambios con checks objetivos")
+    s_eval.add_argument("files", nargs="*", help="Archivos cambiados para compilar/testear")
+    s_eval.add_argument("--command", action="append", default=[], help="Comando adicional permitido")
+    s_eval.set_defaults(func=_cmd_evaluate)
+
+    s_bench = sub.add_parser("benchmark", help="Ejecuta benchmarks locales del harness")
+    s_bench.add_argument("--output", default="", help="Ruta JSON para guardar resultados")
+    s_bench.set_defaults(func=_cmd_benchmark)
 
     s_run = sub.add_parser("run", help="Un ciclo sobre la siguiente feature (o la in_progress)")
     s_run.add_argument(

@@ -7,6 +7,7 @@ from harness.shared_memory import (
     record_skill_usage,
     remember,
     self_improvement_context,
+    semantic_recall,
     shared_memory_context,
     skill_memory_context,
 )
@@ -71,3 +72,25 @@ def test_self_improvement_context(tmp_path: Path) -> None:
     items = list_self_improvements(db_path=db_path)
     assert len(items) == 1
     assert items[0].status == "pending"
+
+
+def test_semantic_recall_finds_token_overlap_without_exact_phrase(tmp_path: Path) -> None:
+    db_path = tmp_path / "memory.db"
+    remember(
+        "architecture",
+        "repo_index",
+        "El índice extrae símbolos de Python e imports para contexto del agente.",
+        tags=["symbols", "imports"],
+        db_path=db_path,
+    )
+    remember(
+        "other",
+        "whatsapp",
+        "Conector de mensajes entrantes.",
+        db_path=db_path,
+    )
+
+    items = semantic_recall(query="buscar imports y simbolos del codigo", db_path=db_path)
+
+    assert items
+    assert items[0].key == "repo_index"

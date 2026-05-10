@@ -31,6 +31,7 @@ from harness.shared_memory import (
     self_improvement_context,
     shared_memory_context,
 )
+from harness.repo_index import repo_context_for_goal
 from harness.tool_learning import internal_execution_context, learned_tools_context
 from harness.paths import (
     AGENTS_MD,
@@ -230,11 +231,16 @@ def _apply_patch_blocks(text: str, root: Path) -> tuple[list[str], list[str]]:
 
 def _build_repo_context(feature: dict[str, Any], *, max_files: int = 12, max_chars: int = 6000) -> str:
     """Selecciona archivos probablemente relevantes sin indexar todo el repo."""
-    root = _repo_root()
     query = " ".join(
         str(feature.get(key) or "")
         for key in ("name", "title", "description")
-    ).lower()
+    )
+    indexed = repo_context_for_goal(query, root=_repo_root(), limit=max_files)
+    if indexed and not indexed.startswith("No se encontraron"):
+        return indexed[:max_chars]
+
+    root = _repo_root()
+    query = query.lower()
     tokens = {
         token
         for token in re.findall(r"[a-z0-9_áéíóúñ]+", query, flags=re.IGNORECASE)

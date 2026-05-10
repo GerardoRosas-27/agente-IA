@@ -28,6 +28,9 @@ Copia `.env.example` a `.env` y configura `LLM_API_BASE_URL` (debe terminar en `
 | `python -m harness.cli run` | Un ciclo líder → implementador → revisor |
 | `python -m harness.cli expand "…"` | Añade features `pending` desde texto natural |
 | `python -m harness.cli init` | Equivale a `pytest tests/ -q` |
+| `python -m harness.cli index "consulta"` | Busca contexto por símbolos/imports/texto |
+| `python -m harness.cli evaluate archivo.py` | Ejecuta checks objetivos sobre cambios |
+| `python -m harness.cli benchmark` | Mide capacidades locales del harness |
 
 También puedes usar `python -m harness` en lugar de `python -m harness.cli` (mismos subcomandos).
 
@@ -48,6 +51,21 @@ powershell -File init.ps1
 ## Punto de entrada para agentes
 
 Abre [`AGENTS.md`](AGENTS.md) y sigue el mapa (`docs/`, `CHECKPOINTS.md`, `progress/`).
+
+## Mejoras tipo Hermes/Claude Code
+
+El harness ahora incluye diez piezas de infraestructura para acercarse a un agente de código avanzado:
+
+1. Perfiles LLM (`LLM_PROFILE`, `LLM_<PERFIL>_MODEL`, `LLM_<PERFIL>_API_BASE_URL`).
+2. Índice del repo por símbolos, imports y tokens.
+3. Recuperación de memoria por similitud léxica ponderada.
+4. Loop de herramientas `search/read/patch/test/command/done`.
+5. Estado observable del loop para replanificar por pasos.
+6. Evaluador objetivo de cambios (`py_compile`, tests relacionados, comandos permitidos).
+7. Política de bloqueo para comandos destructivos.
+8. Evidencia estructurada para el revisor.
+9. Benchmarks locales para medir regresiones de capacidades.
+10. CLI para indexar, evaluar y benchmarkear sin depender del chat.
 
 ## Prueba opcional contra LM Studio real
 
