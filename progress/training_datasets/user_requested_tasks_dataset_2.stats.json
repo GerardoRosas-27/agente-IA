@@ -1,7 +1,0 @@
-{
-  "path": "progress\\training_datasets\\user_requested_tasks_dataset_2.jsonl",
-  "examples": 20000,
-  "approx_tokens": 2289109,
-  "trained_examples": 0,
-  "trained_skills": []
-}

@@ -31,8 +31,10 @@ Cuando el sistema necesita interactuar con plataformas externas que envían even
 ## Aprendizaje de herramientas
 
 El harness mantiene memoria local de cómo se usan las skills en `skill_usage`.
-`harness/tool_learning.py` entrena un selector ligero en Python puro: una neurona por skill
-con pesos por token, más coincidencia lexical contra las instrucciones Markdown. Antes de
+`harness/tool_learning.py` reconstruye un selector ligero en Python puro desde
+`progress/harness_state.db`: una neurona por skill con pesos por token, más
+coincidencia lexical contra las instrucciones Markdown. No se versionan datasets
+de entrenamiento; el runtime conserva solo la memoria aprendida necesaria. Antes de
 crear herramientas nuevas, el líder recibe recomendaciones de skills ya existentes con:
 
 1. qué herramienta parece aplicar;

@@ -8,6 +8,7 @@ Sistema **ligero** inspirado en [Harness Engineering (repo ejemplo)](https://git
 - **Estado en disco** (`progress/`), no solo en el chat.
 - **Tres roles en el modelo**: líder (plan), implementador (informe), revisor (veredicto explícito PASS/FAIL).
 - **Cliente LLM único**: LM Studio u otro servidor compatible OpenAI vía `llm_api_client.py`.
+- **Router de skills liviano**: usa la memoria persistida en `progress/harness_state.db`, sin datasets de entrenamiento versionados.
 
 ## Requisitos
 
