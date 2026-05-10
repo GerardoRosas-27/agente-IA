@@ -8,14 +8,15 @@ from pathlib import Path
 from harness.evaluator import EvaluationResult, evaluate_changes
 from harness.orchestrator import _apply_code_blocks
 from harness.reflection import build_failure_reflection
-from harness.repo_index import search_repo_index
-from harness.trajectories import AgentTrajectory, save_trajectory, start_trajectory
+from harness.repo_index import SymbolLocation, localize_symbols, search_repo_index
+from harness.trajectories import AgentTrajectory, find_similar_trajectories, save_trajectory, start_trajectory
 
 
 @dataclass(frozen=True)
 class LocalizationResult:
     files: tuple[str, ...]
     rationale: str
+    symbols: tuple[SymbolLocation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -39,12 +40,18 @@ class CodingPipelineResult:
 
 def localize_issue(goal: str, *, root: Path, limit: int = 6) -> LocalizationResult:
     matches = search_repo_index(goal, root=root, limit=limit)
+    symbol_matches = tuple(localize_symbols(goal, root=root, limit=limit))
     files = tuple(match.path for match in matches)
-    rationale = "\n".join(
+    file_rationale = "\n".join(
         f"- {match.path}: symbols={', '.join(match.symbols[:6]) or '-'}"
         for match in matches
     ) or "No se encontraron archivos candidatos."
-    return LocalizationResult(files=files, rationale=rationale)
+    symbol_rationale = "\n".join(
+        f"- {item.path}:{item.start_line}-{item.end_line} {item.kind} `{item.symbol}` score={item.score}"
+        for item in symbol_matches
+    ) or "No se encontraron símbolos candidatos."
+    rationale = f"## Archivos candidatos\n{file_rationale}\n\n## Símbolos/líneas candidatos\n{symbol_rationale}"
+    return LocalizationResult(files=files, rationale=rationale, symbols=symbol_matches)
 
 
 def validate_patch_candidate(
@@ -52,6 +59,7 @@ def validate_patch_candidate(
     *,
     root: Path,
     extra_commands: list[str] | None = None,
+    auto_rollback: bool = True,
 ) -> PatchValidationResult:
     check = subprocess.run(
         ["git", "apply", "--check", "--whitespace=nowarn"],
@@ -68,11 +76,26 @@ def validate_patch_candidate(
     apply_result = _apply_code_blocks(f"```patch\n{patch_text.strip()}\n```", root=root)
     changed = apply_result.changed_files
     evaluation = evaluate_changes(changed, commands=extra_commands or [], root=root)
+    if auto_rollback and (not evaluation.ok or apply_result.rejected):
+        rollback = subprocess.run(
+            ["git", "apply", "-R", "--whitespace=nowarn"],
+            cwd=str(root),
+            input=patch_text.strip("\r\n") + "\n",
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        rollback_report = (
+            "\n\n## Rollback automático\n"
+            f"Exit code: {rollback.returncode}\n{rollback.stdout}\n{rollback.stderr}"
+        )
+    else:
+        rollback_report = ""
     return PatchValidationResult(
         applied=bool(changed) and not apply_result.rejected,
         changed_files=tuple(changed),
         evaluation=evaluation,
-        report=f"{apply_result.report}\n\n{evaluation.report}",
+        report=f"{apply_result.report}\n\n{evaluation.report}{rollback_report}",
     )
 
 
@@ -83,8 +106,17 @@ def run_localize_patch_validate(
     patch_text: str | None = None,
     extra_commands: list[str] | None = None,
     trajectory_id: str = "",
+    auto_rollback: bool = True,
 ) -> CodingPipelineResult:
     trajectory = start_trajectory(goal, trajectory_id)
+    similar = find_similar_trajectories(goal)
+    if similar:
+        trajectory.add_step(
+            "retrieve_similar_trajectories",
+            "\n".join(f"- {item.trajectory_id}: {item.verdict} {item.reflection[:240]}" for item in similar),
+            success=True,
+            score=0.5,
+        )
     localization = localize_issue(goal, root=root)
     trajectory.add_step(
         "localize",
@@ -95,7 +127,12 @@ def run_localize_patch_validate(
 
     validation: PatchValidationResult | None = None
     if patch_text:
-        validation = validate_patch_candidate(patch_text, root=root, extra_commands=extra_commands)
+        validation = validate_patch_candidate(
+            patch_text,
+            root=root,
+            extra_commands=extra_commands,
+            auto_rollback=auto_rollback,
+        )
         trajectory.patches.append(patch_text)
         trajectory.tests.append(validation.evaluation.report)
         trajectory.add_step(

@@ -72,6 +72,22 @@ def validate_contract_artifact(role: str, artifact: str) -> list[str]:
     return [f"falta sección requerida: {section}" for section in missing]
 
 
+def assert_contract_handoff(role: str, artifact: str) -> None:
+    errors = validate_contract_artifact(role, artifact)
+    if errors:
+        raise ValueError(f"Handoff inválido para `{role}`: " + "; ".join(errors))
+
+
+def validate_contract_sequence(artifacts: dict[str, str]) -> dict[str, list[str]]:
+    """Valida varios handoffs y devuelve errores por rol."""
+    result: dict[str, list[str]] = {}
+    for role, artifact in artifacts.items():
+        errors = validate_contract_artifact(role, artifact)
+        if errors:
+            result[role] = errors
+    return result
+
+
 def contracts_context() -> str:
     lines = ["## Contratos SOP multiagente"]
     for contract in DEFAULT_CONTRACTS:

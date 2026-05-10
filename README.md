@@ -116,6 +116,14 @@ varios diffs en worktrees o copias aisladas y elige el mejor por tests/score.
 Los contratos SOP (`contracts`) fijan handoffs entre localizador, diseñador de
 patch, implementador, tester, revisor y curador de memoria.
 
+Mejoras adicionales inspiradas en papers:
+
+- Localización jerárquica: archivo -> símbolo -> rango de líneas.
+- Rollback automático si un patch aplicado no pasa evaluación.
+- Reflexiones categorizadas (`import_error`, `test_assertion`, `patch_conflict`, etc.).
+- Recuperación de trayectorias similares antes de actuar.
+- Validación automática de handoffs SOP entre roles.
+
 ## Prueba opcional contra LM Studio real
 
 Con el servidor en marcha:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from harness.repo_index import build_repo_graph, build_repo_index, related_tests_for_files, repo_context_for_goal, search_repo_index
+from harness.repo_index import build_repo_graph, build_repo_index, localize_symbols, related_tests_for_files, repo_context_for_goal, search_repo_index
 
 
 def test_repo_index_extracts_python_symbols(tmp_path: Path) -> None:
@@ -62,3 +62,17 @@ def test_repo_graph_and_related_tests_use_symbols_and_imports(tmp_path: Path) ->
 
     assert "add" in graph.symbol_to_files
     assert related == ["tests/test_calc.py"]
+
+
+def test_localize_symbols_returns_line_ranges(tmp_path: Path) -> None:
+    (tmp_path / "webhook.py").write_text(
+        "\n\nclass WebhookHandler:\n    def handle_webhook(self):\n        return True\n",
+        encoding="utf-8",
+    )
+
+    matches = localize_symbols("handle webhook", root=tmp_path)
+
+    assert matches
+    assert matches[0].symbol == "handle_webhook"
+    assert matches[0].start_line == 4
+    assert matches[0].end_line >= matches[0].start_line

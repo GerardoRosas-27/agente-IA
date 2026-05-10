@@ -1,0 +1,25 @@
+[
+  {
+    "path": "webhook.py",
+    "symbols": [
+      "WebhookHandler",
+      "handle_webhook"
+    ],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "class",
+      "def",
+      "handle",
+      "handle_webhook",
+      "return",
+      "self",
+      "true",
+      "webhook",
+      "webhookhandler"
+    ],
+    "summary": "class WebhookHandler: def handle_webhook(self): return True",
+    "mtime_ns": 1778408779103234700,
+    "size": 79
+  }
+]

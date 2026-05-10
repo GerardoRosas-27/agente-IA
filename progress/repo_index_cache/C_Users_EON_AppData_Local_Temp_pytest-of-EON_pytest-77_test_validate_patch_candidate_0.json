@@ -1,0 +1,15 @@
+[
+  {
+    "path": "broken.py",
+    "symbols": [],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "broken",
+      "def"
+    ],
+    "summary": "def broken(:",
+    "mtime_ns": 1778408781844591600,
+    "size": 14
+  }
+]

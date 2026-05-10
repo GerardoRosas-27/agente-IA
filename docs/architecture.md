@@ -73,6 +73,13 @@ El índice de repositorio mantiene caché incremental en
 El evaluador usa este grafo para encontrar tests relacionados aunque no sigan
 solo la convención `tests/test_<modulo>.py`.
 
+La localización es jerárquica: primero archivos, luego símbolos y rangos de
+líneas. Si un patch aplicado falla evaluación, el pipeline intenta rollback
+automático. Las reflexiones se categorizan para que la siguiente iteración use
+estrategias distintas según el tipo de fallo. Antes de actuar, el pipeline puede
+recuperar trayectorias similares previas. Los SOPs multiagente se validan antes
+de aceptar handoffs incompletos.
+
 ## Autoaprendizaje por uso real
 
 Cada observación del modo agente puede generar un evento en `usage_events`:

@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from harness.paths import PROGRESS_DIR
+from harness.repo_index import tokenize
 
 
 TRAJECTORY_DIR = PROGRESS_DIR / "trajectories"
@@ -103,3 +104,47 @@ def trajectory_summary(trajectory: AgentTrajectory) -> str:
         f"verdict={trajectory.verdict} steps={len(trajectory.steps)} "
         f"successes={successes} failures={failures}"
     )
+
+
+def list_trajectories(*, base_dir: Path = TRAJECTORY_DIR, limit: int = 100) -> list[AgentTrajectory]:
+    if not base_dir.is_dir():
+        return []
+    items: list[AgentTrajectory] = []
+    for path in sorted(base_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            items.append(load_trajectory(path.stem, base_dir=base_dir))
+        except (OSError, json.JSONDecodeError, KeyError, ValueError):
+            continue
+        if len(items) >= limit:
+            break
+    return items
+
+
+def find_similar_trajectories(
+    goal: str,
+    *,
+    base_dir: Path = TRAJECTORY_DIR,
+    limit: int = 5,
+) -> list[AgentTrajectory]:
+    query_tokens = tokenize(goal)
+    if not query_tokens:
+        return []
+    scored: list[tuple[float, AgentTrajectory]] = []
+    for trajectory in list_trajectories(base_dir=base_dir):
+        haystack = " ".join(
+            [
+                trajectory.goal,
+                trajectory.verdict,
+                trajectory.reflection,
+                *[step.action for step in trajectory.steps],
+                *[step.observation[:500] for step in trajectory.steps],
+            ]
+        )
+        overlap = query_tokens & tokenize(haystack)
+        if overlap:
+            score = len(overlap) / len(query_tokens)
+            if trajectory.verdict == "pass":
+                score += 0.15
+            scored.append((score, trajectory))
+    scored.sort(key=lambda item: (-item[0], item[1].trajectory_id))
+    return [trajectory for _score, trajectory in scored[: max(limit, 0)]]

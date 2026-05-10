@@ -28,6 +28,16 @@ class FileIndexEntry:
 
 
 @dataclass(frozen=True)
+class SymbolLocation:
+    path: str
+    symbol: str
+    kind: str
+    start_line: int
+    end_line: int
+    score: float = 0.0
+
+
+@dataclass(frozen=True)
 class RepoGraph:
     entries: tuple[FileIndexEntry, ...]
     symbol_to_files: dict[str, tuple[str, ...]]
@@ -63,6 +73,36 @@ def _python_static_facts(path: Path) -> tuple[tuple[str, ...], tuple[str, ...], 
         elif isinstance(node, ast.Attribute):
             references.append(node.attr)
     return tuple(dict.fromkeys(symbols)), tuple(dict.fromkeys(imports)), tuple(dict.fromkeys(references))
+
+
+def _python_symbol_locations(path: Path, rel_path: str) -> tuple[SymbolLocation, ...]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+    except (SyntaxError, OSError, UnicodeDecodeError):
+        return ()
+    locations: list[SymbolLocation] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            locations.append(
+                SymbolLocation(
+                    path=rel_path,
+                    symbol=node.name,
+                    kind="class",
+                    start_line=int(getattr(node, "lineno", 1)),
+                    end_line=int(getattr(node, "end_lineno", getattr(node, "lineno", 1))),
+                )
+            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            locations.append(
+                SymbolLocation(
+                    path=rel_path,
+                    symbol=node.name,
+                    kind="function",
+                    start_line=int(getattr(node, "lineno", 1)),
+                    end_line=int(getattr(node, "end_lineno", getattr(node, "lineno", 1))),
+                )
+            )
+    return tuple(locations)
 
 
 def _cache_path(root: Path) -> Path:
@@ -217,6 +257,34 @@ def repo_context_for_goal(query: str, *, root: Path = REPO_ROOT, limit: int = 6)
             f"  resumen: {entry.summary or '(sin resumen)'}"
         )
     return "\n".join(chunks)
+
+
+def localize_symbols(query: str, *, root: Path = REPO_ROOT, limit: int = 10) -> list[SymbolLocation]:
+    """Localiza clases/funciones/líneas candidatas para una tarea."""
+    query_tokens = tokenize(query)
+    if not query_tokens:
+        return []
+    results: list[SymbolLocation] = []
+    for entry in search_repo_index(query, root=root, limit=max(limit * 2, 10)):
+        path = root / entry.path
+        for location in _python_symbol_locations(path, entry.path):
+            symbol_tokens = tokenize(location.symbol)
+            score = float(len(query_tokens & symbol_tokens))
+            score += 0.25 * sum(1 for token in query_tokens if token in entry.path.lower())
+            score += 0.1 * len(query_tokens & set(entry.tokens))
+            if score > 0:
+                results.append(
+                    SymbolLocation(
+                        path=location.path,
+                        symbol=location.symbol,
+                        kind=location.kind,
+                        start_line=location.start_line,
+                        end_line=location.end_line,
+                        score=round(score, 4),
+                    )
+                )
+    results.sort(key=lambda item: (-item.score, item.path, item.start_line))
+    return results[: max(limit, 0)]
 
 
 def related_tests_for_files(files: list[str], *, root: Path = REPO_ROOT) -> list[str]:
