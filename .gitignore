@@ -33,3 +33,11 @@ huggingface/
 
 # LM Studio: carpeta de descargas (Windows/macOS: nombre puede variar)
 # LM-Studio/
+
+# Artefactos locales generados por ejecuciones/tests del harness
+progress/events.jsonl
+progress/harness_state.db
+progress/benchmarks/*.json
+progress/repo_index_cache/*.json
+progress/*_execution_environment/logs/*.log
+progress/*_execution_environment/logs/*.jsonl

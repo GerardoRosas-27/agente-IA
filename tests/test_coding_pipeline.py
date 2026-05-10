@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from harness.coding_pipeline import localize_issue, run_localize_patch_validate, validate_patch_candidate
+from harness.repo_index import build_repo_index, search_repo_index
 
 
 def test_localize_issue_finds_related_file(tmp_path: Path) -> None:
@@ -51,3 +52,27 @@ new file mode 100644
     assert not result.evaluation.ok
     assert "Rollback automático" in result.report
     assert not (tmp_path / "broken.py").exists()
+
+
+def test_patch_validation_invalidates_repo_index_memory_cache(tmp_path: Path) -> None:
+    """Después de aplicar un patch, búsquedas posteriores no deben ver índice stale."""
+    subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True, text=True, check=True)
+    (tmp_path / "seed.py").write_text("def seed_symbol():\n    return 1\n", encoding="utf-8")
+    # Poblar la caché en memoria antes de aplicar el patch.
+    assert [entry.path for entry in build_repo_index(root=tmp_path)]
+
+    patch = """diff --git a/new_module.py b/new_module.py
+new file mode 100644
+--- /dev/null
++++ b/new_module.py
+@@ -0,0 +1,2 @@
++def unique_new_symbol():
++    return 42
+"""
+
+    result = validate_patch_candidate(patch, root=tmp_path, auto_rollback=False)
+
+    assert result.applied
+    matches = search_repo_index("unique_new_symbol", root=tmp_path)
+    assert matches
+    assert matches[0].path == "new_module.py"

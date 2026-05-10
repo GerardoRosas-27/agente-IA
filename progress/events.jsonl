@@ -1,0 +1,92 @@
+{"ts": "2026-05-10T05:42:45", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:42:45", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:42:45", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "pass"}
+{"ts": "2026-05-10T05:42:46", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:42:46", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:42:46", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
+{"ts": "2026-05-10T05:42:46", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
+{"ts": "2026-05-10T05:42:46", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T05:50:39", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:50:39", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:50:39", "event": "adversarial_reviewer.verdict", "role": "adversarial_reviewer", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail"}
+{"ts": "2026-05-10T05:50:39", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T05:50:40", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:50:40", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:50:40", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "pass"}
+{"ts": "2026-05-10T05:50:41", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:50:41", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:50:41", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
+{"ts": "2026-05-10T05:50:41", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
+{"ts": "2026-05-10T05:50:41", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T05:55:19", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:55:19", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:55:19", "event": "adversarial_reviewer.verdict", "role": "adversarial_reviewer", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail"}
+{"ts": "2026-05-10T05:55:19", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T05:55:20", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:55:20", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:55:20", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "pass"}
+{"ts": "2026-05-10T05:55:21", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:55:21", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:55:21", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
+{"ts": "2026-05-10T05:55:21", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
+{"ts": "2026-05-10T05:55:21", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T05:59:41", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:59:41", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:59:41", "event": "adversarial_reviewer.verdict", "role": "adversarial_reviewer", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail"}
+{"ts": "2026-05-10T05:59:41", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T05:59:42", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:59:42", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:59:42", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "pass"}
+{"ts": "2026-05-10T05:59:43", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T05:59:43", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T05:59:43", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
+{"ts": "2026-05-10T05:59:43", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
+{"ts": "2026-05-10T05:59:43", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T06:02:58", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:02:58", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:02:58", "event": "adversarial_reviewer.verdict", "role": "adversarial_reviewer", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail"}
+{"ts": "2026-05-10T06:02:58", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T06:02:59", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:02:59", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:02:59", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "pass"}
+{"ts": "2026-05-10T06:03:00", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:03:00", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:03:00", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
+{"ts": "2026-05-10T06:03:00", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
+{"ts": "2026-05-10T06:03:00", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T06:10:23", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:10:23", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:10:23", "event": "adversarial_reviewer.verdict", "role": "adversarial_reviewer", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail"}
+{"ts": "2026-05-10T06:10:23", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T06:10:23", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:10:23", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:10:24", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "pass"}
+{"ts": "2026-05-10T06:10:24", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:10:24", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:10:25", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
+{"ts": "2026-05-10T06:10:25", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
+{"ts": "2026-05-10T06:10:25", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T06:13:43", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:13:43", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:13:43", "event": "adversarial_reviewer.verdict", "role": "adversarial_reviewer", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail"}
+{"ts": "2026-05-10T06:13:43", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T06:13:44", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:13:44", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:13:44", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "pass"}
+{"ts": "2026-05-10T06:13:45", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:13:45", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:13:45", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
+{"ts": "2026-05-10T06:13:45", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
+{"ts": "2026-05-10T06:13:45", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T06:16:23", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:16:23", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:16:23", "event": "adversarial_reviewer.verdict", "role": "adversarial_reviewer", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail"}
+{"ts": "2026-05-10T06:16:23", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-10T06:16:24", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:16:24", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:16:24", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "pass"}
+{"ts": "2026-05-10T06:16:25", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-10T06:16:25", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-10T06:16:25", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
+{"ts": "2026-05-10T06:16:25", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
+{"ts": "2026-05-10T06:16:25", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}

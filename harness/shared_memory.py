@@ -237,7 +237,9 @@ def semantic_recall(
         score = (len(overlap) / len(query_tokens)) + (0.15 * item.confidence)
         scored.append((score, item))
     # Orden estable: score descendente; en empate, el más reciente primero.
-    scored.sort(key=lambda pair: (-pair[0], -ord(pair[1].updated_at[:1] or "0"), pair[1].id))
+    # ISO timestamps ordenan lexicográficamente, así que `reverse=True` sobre
+    # `updated_at` no necesita parsear fechas.
+    scored.sort(key=lambda pair: (pair[0], pair[1].updated_at, -pair[1].id), reverse=True)
     return [item for _score, item in scored[: max(limit, 0)]]
 
 
@@ -272,6 +274,49 @@ def _cosine_tfidf(query_tf: Counter[str], doc_tf: Counter[str], idf: dict[str, f
     return dot / (q_norm * d_norm)
 
 
+def _haystack_for(item: MemoryItem) -> str:
+    return f"{item.scope} {item.key} {item.value} {' '.join(item.tags)}"
+
+
+def _semantic_recall_with_embeddings(
+    query: str,
+    candidates: list[MemoryItem],
+    limit: int,
+) -> list[MemoryItem] | None:
+    """Intenta usar embeddings reales (LM Studio /v1/embeddings).
+
+    Devuelve `None` si no hay endpoint disponible o cualquier embedding falla;
+    en ese caso, el llamador hace fallback a TF-IDF. Este nivel de paranoia
+    permite que el harness funcione offline y que si el modelo embedding se
+    descarga a mitad de sesión, no se rompa nada — solo se degrada el recall.
+    """
+    try:
+        from harness.embeddings import (
+            cosine_similarity,
+            get_embedding,
+            is_embeddings_endpoint_configured,
+        )
+    except ImportError:
+        return None
+    if not is_embeddings_endpoint_configured():
+        return None
+    query_emb = get_embedding(query)
+    if query_emb is None:
+        return None
+    scored: list[tuple[float, MemoryItem]] = []
+    for item in candidates:
+        item_emb = get_embedding(_haystack_for(item))
+        if item_emb is None:
+            return None  # fallback: si uno falla, mejor consistencia que mezcla
+        sim = cosine_similarity(query_emb.vector, item_emb.vector)
+        if sim <= 0:
+            continue
+        sim += 0.05 * item.confidence
+        scored.append((sim, item))
+    scored.sort(key=lambda pair: (-pair[0], pair[1].id))
+    return [item for _score, item in scored[: max(limit, 0)]]
+
+
 def semantic_recall_v2(
     *,
     query: str,
@@ -279,14 +324,17 @@ def semantic_recall_v2(
     limit: int = 12,
     candidate_pool: int = 200,
     db_path: Path = STATE_DB_PATH,
+    prefer_embeddings: bool = True,
 ) -> list[MemoryItem]:
-    """Recall por TF-IDF + cosine, robusto frente a distractores.
+    """Recall por embeddings reales (si LM Studio los expone) o TF-IDF como fallback.
 
     Inspirado en el paper "Episodic Memory is the Missing Piece for Long-Term LLM
     Agents" (arXiv:2502.06975): la sliding window/LIKE pierde recall ante muchos
-    distractores; un índice ponderado por IDF mejora dramáticamente la
-    precisión. Implementación 100% Python puro para mantener el harness sin
-    dependencias de embeddings externos (compatible con LM Studio offline).
+    distractores; embeddings o TF-IDF mejoran dramáticamente la precisión.
+
+    Si `prefer_embeddings=True` y hay un modelo embedding configurado vía
+    `LLM_EMBEDDING_MODEL`, se usa `harness.embeddings.get_embedding`. Si no,
+    cae a TF-IDF en Python puro (sin dependencia externa).
     """
     query_tokens = _tokens(query)
     if not query_tokens:
@@ -296,10 +344,15 @@ def semantic_recall_v2(
     if not candidates:
         return []
 
+    if prefer_embeddings:
+        emb_results = _semantic_recall_with_embeddings(query, candidates, limit)
+        if emb_results is not None:
+            return emb_results
+
     docs: list[tuple[MemoryItem, Counter[str]]] = []
     df: Counter[str] = Counter()
     for item in candidates:
-        haystack = f"{item.scope} {item.key} {item.value} {' '.join(item.tags)}"
+        haystack = _haystack_for(item)
         tf = _tf_counter(haystack)
         if not tf:
             continue

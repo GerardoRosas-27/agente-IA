@@ -5,6 +5,7 @@ from pathlib import Path
 from harness.repo_index import (
     build_repo_graph,
     build_repo_index,
+    clear_repo_index_memory_cache,
     localize_symbols,
     related_tests_for_files,
     repo_context_for_goal,
@@ -49,6 +50,7 @@ def test_repo_index_search_returns_related_files(tmp_path: Path) -> None:
 def test_repo_index_cache_reuses_unchanged_entries(tmp_path: Path, monkeypatch) -> None:
     cache_dir = tmp_path / "progress"
     monkeypatch.setattr("harness.repo_index.PROGRESS_DIR", cache_dir)
+    clear_repo_index_memory_cache()
     source = tmp_path / "module.py"
     source.write_text("def alpha():\n    return 1\n", encoding="utf-8")
 
@@ -57,6 +59,26 @@ def test_repo_index_cache_reuses_unchanged_entries(tmp_path: Path, monkeypatch) 
 
     assert first == second
     assert list((cache_dir / "repo_index_cache").glob("*.json"))
+
+
+def test_memory_cache_avoids_rescan_on_repeat(tmp_path: Path, monkeypatch) -> None:
+    """A4: la caché en memoria no debe recalcular si el TTL no ha vencido."""
+    monkeypatch.setattr("harness.repo_index.PROGRESS_DIR", tmp_path / "progress")
+    clear_repo_index_memory_cache()
+    (tmp_path / "alpha.py").write_text("def f(): return 1\n", encoding="utf-8")
+    first = build_repo_index(root=tmp_path)
+
+    # Tras la primera llamada, manipulamos los archivos PERO el cache en memoria
+    # debería seguir devolviendo lo mismo durante TTL segundos. Si NO se usara
+    # caché en memoria, la segunda llamada vería el archivo nuevo.
+    (tmp_path / "beta.py").write_text("def g(): return 2\n", encoding="utf-8")
+    second = build_repo_index(root=tmp_path, use_memory_cache=True)
+    assert second == first, "memory cache no respetó TTL"
+
+    # Si pedimos sin caché, sí deben verse ambos archivos.
+    fresh = build_repo_index(root=tmp_path, use_memory_cache=False)
+    paths = {entry.path for entry in fresh}
+    assert "alpha.py" in paths and "beta.py" in paths
 
 
 def test_repo_graph_and_related_tests_use_symbols_and_imports(tmp_path: Path) -> None:

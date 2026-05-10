@@ -1,0 +1,108 @@
+[
+  {
+    "path": "pkg/client.py",
+    "symbols": [
+      "HttpClient",
+      "StubClient",
+      "standalone",
+      "fetch"
+    ],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "class",
+      "client",
+      "def",
+      "fetch",
+      "httpclient",
+      "pkg",
+      "return",
+      "self",
+      "standalone",
+      "stubclient"
+    ],
+    "summary": "class HttpClient: def fetch(self): return 1 class StubClient: def fetch(self):",
+    "mtime_ns": 1778414135662371100,
+    "size": 155,
+    "locations": [
+      {
+        "path": "pkg/client.py",
+        "symbol": "HttpClient",
+        "kind": "class",
+        "start_line": 1,
+        "end_line": 3,
+        "score": 0.0
+      },
+      {
+        "path": "pkg/client.py",
+        "symbol": "StubClient",
+        "kind": "class",
+        "start_line": 5,
+        "end_line": 7,
+        "score": 0.0
+      },
+      {
+        "path": "pkg/client.py",
+        "symbol": "standalone",
+        "kind": "function",
+        "start_line": 9,
+        "end_line": 10,
+        "score": 0.0
+      },
+      {
+        "path": "pkg/client.py",
+        "symbol": "fetch",
+        "kind": "function",
+        "start_line": 2,
+        "end_line": 3,
+        "score": 0.0
+      },
+      {
+        "path": "pkg/client.py",
+        "symbol": "fetch",
+        "kind": "function",
+        "start_line": 6,
+        "end_line": 7,
+        "score": 0.0
+      }
+    ]
+  },
+  {
+    "path": "pkg/consumer.py",
+    "symbols": [
+      "use"
+    ],
+    "imports": [
+      "pkg"
+    ],
+    "references": [
+      "fetch",
+      "HttpClient"
+    ],
+    "tokens": [
+      "client",
+      "consumer",
+      "def",
+      "fetch",
+      "from",
+      "httpclient",
+      "import",
+      "pkg",
+      "return",
+      "use"
+    ],
+    "summary": "from pkg.client import HttpClient def use(): return HttpClient().fetch()",
+    "mtime_ns": 1778414135662371100,
+    "size": 82,
+    "locations": [
+      {
+        "path": "pkg/consumer.py",
+        "symbol": "use",
+        "kind": "function",
+        "start_line": 3,
+        "end_line": 4,
+        "score": 0.0
+      }
+    ]
+  }
+]

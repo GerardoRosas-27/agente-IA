@@ -31,7 +31,15 @@ class PatchCandidateResult:
 
 def _copy_repo(root: Path, destination: Path) -> None:
     def ignore(_dir: str, names: list[str]) -> set[str]:
-        return {name for name in names if name in {".git", "__pycache__", ".pytest_cache"}}
+        ignored = {
+            ".git",
+            ".venv",
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+        }
+        return {name for name in names if name in ignored}
 
     shutil.copytree(root, destination, ignore=ignore)
     subprocess.run(["git", "init"], cwd=str(destination), capture_output=True, text=True, timeout=30)

@@ -148,6 +148,46 @@ class TestRunOneFeatureCycle(unittest.TestCase):
         self.assertTrue((prog / "impl_demo_feature.md").is_file())
         self.assertTrue((prog / "review_demo_feature.md").is_file())
 
+    def test_adversarial_reviewer_overrides_pass_when_disagrees(self) -> None:
+        """E1: si el reviewer principal dice PASS pero el red team dice FAIL,
+        el ciclo debe terminar en FAIL (no hay consenso)."""
+        prog = self.tmp / "progress"
+
+        call_count = {"n": 0}
+
+        def fake_invoke(*_a, **kwargs):
+            call_count["n"] += 1
+            role = str(kwargs.get("role_hint") or "")
+            # Orden esperado: leader, implementer, reviewer, adversarial
+            if "leader" in role:
+                return "plan del líder"
+            if "implementer" in role:
+                return "## Resumen\nhecho"
+            if "adversarial" in role:
+                return "VERDICT: FAIL\n- el patch no cubre el criterio X."
+            # reviewer principal
+            return "VERDICT: PASS\n\nlisto"
+
+        with (
+            patch.object(orchestrator, "FEATURE_LIST_PATH", self.fl),
+            patch.object(orchestrator, "PROGRESS_DIR", prog),
+            patch.object(orchestrator, "AGENTS_MD", self.tmp / "AGENTS.md"),
+            patch.object(orchestrator, "CHECKPOINTS_MD", self.tmp / "CHECKPOINTS.md"),
+            patch.object(orchestrator, "DOCS_DIR", self.tmp / "docs"),
+            patch.object(orchestrator, "invoke_llm", fake_invoke),
+            patch.object(orchestrator, "_run_tests", return_value="tests ok"),
+            patch.object(orchestrator, "_build_repo_context", return_value="repo ctx"),
+        ):
+            res = orchestrator.run_one_feature_cycle(
+                model="m",
+                max_retries=0,
+                enable_adversarial_review=True,
+            )
+
+        assert res is not None
+        self.assertEqual(res.verdict, False)
+        self.assertTrue((prog / "red_review_demo_feature.md").is_file())
+
     def test_verifier_overrides_llm_pass_when_tests_fail(self) -> None:
         prog = self.tmp / "progress"
         with (

@@ -21,7 +21,11 @@
 | `harness/benchmark_tasks.py` | Benchmarks propios estilo SWE-bench en JSON |
 | `harness/multiagent_contracts.py` | SOPs y validación de artefactos por rol |
 | `harness/test_generator.py` | Generador de Bug Reproduction Tests desde una feature (Otter / BRT Agent) |
-| `harness/verifier.py` | Verificador determinista basado en evidencia ejecutable (pytest output, py_compile, BRTs); hard-fails sobre secretos / imports / tests |
+| `harness/verifier.py` | Verificador determinista basado en evidencia ejecutable (pytest output, py_compile, BRTs, ruff); hard-fails sobre secretos / imports / tests |
+| `harness/static_analysis.py` | Lint con `ruff` sobre archivos modificados (B1) |
+| `harness/embeddings.py` | Cliente para `/v1/embeddings` con caché SQLite (F1); fallback automático a TF-IDF |
+| `harness/events.py` | Logging estructurado JSONL en `progress/events.jsonl` (D1) |
+| `harness/mutation_test.py` | Mutation testing por AST para detectar tests fantasma (E2) |
 | **`api_endpoints/whatsapp_hook.py`** | **Maneja la recepción, verificación y parsing de payloads Webhook externos (ej. WhatsApp).** |
 
 ## Flags opt-in del orquestador
@@ -34,6 +38,7 @@ en literatura reciente sin romper compatibilidad con flujos existentes:
 | `enable_brt` | Antes del implementador, pide al LLM 1-3 tests pytest fail-to-pass desde la feature; los BRTs se ejecutan al final como evidencia | Otter (arXiv:2502.05368), BRT Agent (arXiv:2502.01821) |
 | `enable_verifier` | Tras el reviewer LLM, ejecuta `harness.verifier.verify_cycle` sobre evidencia ejecutable; sobreescribe a FAIL si encuentra contradicciones | MAR (arXiv:2512.20845), Generator/Critic/Verifier |
 | `enable_replan` | Si el reviewer da FAIL, antes de reintentar pide al Líder un **plan nuevo** basado en el feedback (no reusa el plan original) | AdaCoder (arXiv:2504.04220), CodePlan (Microsoft) |
+| `enable_adversarial_review` | Tras el reviewer principal lanza un segundo reviewer "red team"; si los dos no concuerdan, el ciclo se marca FAIL | MAR (arXiv:2512.20845) |
 
 Best-of-N también acepta `brt_paths`: cuando se proveen, el ranking de
 candidatos se hace por **Ensemble Pass Rate** (EPR) sobre los BRTs, no solo
@@ -54,12 +59,73 @@ search_method_in_class("fetch", "HttpClient") # → solo métodos en esa clase
 search_callers("HttpClient")                  # → archivos que importan/referencian
 ```
 
-## Memoria con TF-IDF (resistente a distractores)
+## Memoria con TF-IDF (resistente a distractores) y embeddings opcionales
 
-`harness.shared_memory.semantic_recall_v2` recupera memorias por similitud
-TF-IDF + cosine en Python puro, sin embeddings externos. En benchmarks con
-muchos distractores recupera consistentemente el item relevante en el top-3
-(la versión LIKE/regex previa lo perdía). Compatible con LM Studio offline.
+`harness.shared_memory.semantic_recall_v2` recupera memorias en dos modos:
+
+1. **Embeddings reales** vía `/v1/embeddings` (LM Studio, vLLM…), si la env
+   var `LLM_EMBEDDING_MODEL` apunta a un modelo embedding cargado. Los
+   vectores se cachean en SQLite por (texto, modelo).
+2. **TF-IDF + cosine** en Python puro como fallback. Cero dependencias
+   externas, funciona offline.
+
+En benchmarks con muchos distractores ambos modos recuperan el item
+relevante en el top-3 (la versión LIKE/regex previa lo perdía).
+
+## Robustez del cliente LLM
+
+`llm_api_client._post_chat_completions` envuelve cada llamada con:
+
+- **3 reintentos** con backoff exponencial (1s, 3s, 9s) sobre `ConnectionError`,
+  `Timeout` y status retryables (`408/425/429/500/502/503/504`).
+- **Circuit breaker** por backend: si se acumulan 5 fallos seguidos, se abre
+  durante 30 segundos (las llamadas siguientes devuelven `None` inmediatamente
+  sin tocar el servidor) y se cierra al recibir el primer éxito.
+
+`reset_llm_circuit()` permite reiniciar el estado en tests y al cambiar de
+perfil.
+
+## Caché en memoria del repo index (A4)
+
+`build_repo_index` cachea las entries por proceso con TTL=5s
+(`use_memory_cache=True` por defecto). Esto evita 3-4 escaneos completos por
+ciclo del orquestador (`localize_issue` + `repo_context_for_goal` +
+`evaluate_changes`). Para invalidar manualmente:
+
+```python
+from harness.repo_index import clear_repo_index_memory_cache
+clear_repo_index_memory_cache()
+```
+
+## Observabilidad: eventos JSONL (D1)
+
+`harness.events.emit_event(event, **fields)` appendea una línea JSON a
+`progress/events.jsonl`. Eventos emitidos hoy:
+
+- `cycle.started`, `cycle.finished` (outcome=pass/fail/ambiguous)
+- `leader.planned`
+- `verifier.verdict`, `verifier.override`
+- `adversarial_reviewer.verdict`
+
+`read_events()` y `event_counts_by_outcome()` permiten construir dashboards o
+medir tendencias (¿la tasa de PASS está cayendo? ¿el verifier hace override
+con frecuencia? = el reviewer LLM está mal calibrado).
+
+## Mutation testing (E2)
+
+`harness.mutation_test.run_mutation_test(file, test_paths, root)` aplica
+mutaciones AST simples (boolean flips, operator flips, return → None) a un
+archivo y mide el `mutation_score = killed / total`. Si los tests son
+fantasma (sin asserts reales), las mutaciones sobreviven y el reporte lo
+señala. Útil como check adicional en auto-mejora (feature 19) y para validar
+que un BRT realmente discrimina.
+
+## Dependencias entre features (H1)
+
+`feature_list.json` ahora soporta `depends_on: [id1, id2, ...]`. La función
+`pick_next_pending` ignora features cuyas dependencias no estén `done`. Si
+todas las pending están bloqueadas, devuelve `None` (no falla en silencio).
+`blocked_by_dependencies(features)` lista cuáles están bloqueadas y por qué.
 
 ## Backends LLM
 

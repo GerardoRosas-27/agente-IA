@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from harness.auto_training import record_user_session_training
+from harness.events import emit_event
 from harness.test_generator import (
     GeneratedTestSuite,
     generate_repro_tests,
@@ -37,7 +38,7 @@ from harness.shared_memory import (
     self_improvement_context,
     shared_memory_context,
 )
-from harness.repo_index import repo_context_for_goal
+from harness.repo_index import clear_repo_index_memory_cache, repo_context_for_goal
 from harness.tool_learning import internal_execution_context, learned_tools_context
 from harness.paths import (
     AGENTS_MD,
@@ -557,6 +558,7 @@ def run_one_feature_cycle(
     enable_brt: bool = False,
     enable_verifier: bool = False,
     enable_replan: bool = False,
+    enable_adversarial_review: bool = False,
 ) -> HarnessCycleResult | None:
     """
     Ejecuta un ciclo completo sobre la feature `in_progress`, o reclama la siguiente `pending`.
@@ -571,6 +573,10 @@ def run_one_feature_cycle(
       - `enable_replan`: si el revisor da FAIL, antes de reintentar pide al
         Líder un plan nuevo basado en el feedback (en lugar de reusar el plan
         original). Inspirado en AdaCoder / CodePlan.
+      - `enable_adversarial_review`: tras el reviewer principal, llama a un
+        segundo reviewer "red team" cuyo prompt lo orienta a buscar fallos.
+        Si discrepan (uno PASS, otro FAIL), el ciclo se marca FAIL.
+        Inspirado en MAR (Multi-Agent Reflexion, arXiv:2512.20845).
     """
     log = on_log or (lambda _m: None)
 
@@ -634,8 +640,10 @@ def run_one_feature_cycle(
         )
 
     log("Líder: planificando…")
+    emit_event("cycle.started", role="leader", feature_id=fid, feature_name=slug)
     leader_out = _ask_leader()
     _append_markdown(PROGRESS_DIR / "current.md", f"Líder · feature {fid}", leader_out)
+    emit_event("leader.planned", feature_id=fid, feature_name=slug, length=len(leader_out))
 
     brt_suite: GeneratedTestSuite | None = None
     if enable_brt:
@@ -691,6 +699,8 @@ def run_one_feature_cycle(
 
         log("Aplicando cambios al sistema de archivos...")
         apply_result = _apply_code_blocks(impl_body)
+        if apply_result.changed_files:
+            clear_repo_index_memory_cache()
         saved_files = apply_result.changed_files
         if saved_files:
             log(f"Archivos creados/modificados: {', '.join(saved_files)}")
@@ -761,6 +771,54 @@ def run_one_feature_cycle(
                 "o se rechazaron bloques de cambio."
             )
 
+        if enable_adversarial_review and verdict is True:
+            log("Adversarial reviewer (red team): buscando fallos…")
+            try:
+                adversarial_body = invoke_llm(
+                    model,
+                    prompts.ADVERSARIAL_REVIEWER_SYSTEM,
+                    prompts.adversarial_reviewer_user_message(
+                        feature_block=fblock,
+                        impl_report=impl_body,
+                        test_output=test_output,
+                        primary_review=review_body,
+                        change_evidence=change_evidence,
+                    ),
+                    llm_chat=llm_chat,
+                    num_predict=num_predict_leader,
+                    role_hint=f"adversarial_reviewer_attempt_{attempt + 1}",
+                )
+            except Exception as exc:
+                log(f"Adversarial reviewer falló (continuamos sin él): {exc}")
+                adversarial_body = ""
+            if adversarial_body:
+                adversarial_path = PROGRESS_DIR / f"red_review_{slug}.md"
+                adversarial_path.write_text(
+                    f"# Red-team Review · {feat.get('title')} (Intento {attempt + 1})\n\n"
+                    f"{adversarial_body}\n",
+                    encoding="utf-8",
+                )
+                adversarial_verdict = parse_verdict(adversarial_body)
+                emit_event(
+                    "adversarial_reviewer.verdict",
+                    role="adversarial_reviewer",
+                    feature_id=fid,
+                    feature_name=slug,
+                    attempt=attempt + 1,
+                    outcome="pass" if adversarial_verdict is True else (
+                        "fail" if adversarial_verdict is False else "ambiguous"
+                    ),
+                )
+                # Si el red team encuentra fallos (FAIL) o es ambiguo, anulamos
+                # el PASS del reviewer principal: dos veredictos en desacuerdo
+                # = no hay consenso.
+                if adversarial_verdict is not True:
+                    verdict = False
+                    review_body += (
+                        f"\n\nVEREDICTO SOBRESCRITO POR ADVERSARIAL REVIEWER. "
+                        f"Ver `{adversarial_path.name}`."
+                    )
+
         if enable_verifier:
             brt_runs = []
             if brt_suite is not None and brt_suite.test_path.is_file():
@@ -777,6 +835,7 @@ def run_one_feature_cycle(
                     rejected=apply_result.rejected,
                     bash_ok=bash_ok,
                     bug_reproduction_runs=brt_runs,
+                    root=_repo_root(),
                 )
             except Exception as exc:
                 log(f"Verifier determinista falló (continuamos con LLM-only): {exc}")
@@ -787,11 +846,28 @@ def run_one_feature_cycle(
                     f"{determ_verdict.report_markdown}\n",
                     encoding="utf-8",
                 )
+                emit_event(
+                    "verifier.verdict",
+                    role="verifier",
+                    feature_id=fid,
+                    feature_name=slug,
+                    attempt=attempt + 1,
+                    outcome="pass" if determ_verdict.passed else "fail",
+                    score=determ_verdict.score,
+                )
                 if verdict is True and not determ_verdict.passed:
                     verdict = False
                     review_body += (
                         "\n\nVEREDICTO SOBRESCRITO POR VERIFIER DETERMINISTA: "
                         f"score={determ_verdict.score:.3f}. Ver `{verify_path.name}`."
+                    )
+                    emit_event(
+                        "verifier.override",
+                        role="verifier",
+                        feature_id=fid,
+                        feature_name=slug,
+                        attempt=attempt + 1,
+                        score=determ_verdict.score,
                     )
 
         if verdict is True:
@@ -877,6 +953,12 @@ def run_one_feature_cycle(
 
     save_feature_list(FEATURE_LIST_PATH, data)
     log(msg)
+    emit_event(
+        "cycle.finished",
+        feature_id=fid,
+        feature_name=slug,
+        outcome=("pass" if verdict is True else "fail" if verdict is False else "ambiguous"),
+    )
     return HarnessCycleResult(
         feature_id=fid,
         feature_name=slug,

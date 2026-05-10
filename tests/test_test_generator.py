@@ -92,7 +92,7 @@ def test_generate_repro_tests_falls_back_when_llm_returns_garbage(tmp_path: Path
     )
 
     assert suite.test_path.is_file()
-    assert "pytest.skip" in suite.test_code
+    assert "pytest.fail" in suite.test_code
 
 
 def test_run_pytest_on_file_counts_passed_and_failed(tmp_path: Path) -> None:

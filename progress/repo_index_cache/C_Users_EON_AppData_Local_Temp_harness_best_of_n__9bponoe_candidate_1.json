@@ -1,0 +1,54 @@
+[
+  {
+    "path": "answer.py",
+    "symbols": [],
+    "imports": [],
+    "references": [
+      "ANSWER"
+    ],
+    "tokens": [
+      "answer"
+    ],
+    "summary": "ANSWER = 42",
+    "mtime_ns": 1778415168988264000,
+    "size": 13,
+    "locations": []
+  },
+  {
+    "path": "brt_demo.py",
+    "symbols": [
+      "test_answer_is_42"
+    ],
+    "imports": [
+      "answer"
+    ],
+    "references": [
+      "ANSWER"
+    ],
+    "tokens": [
+      "answer",
+      "assert",
+      "brt",
+      "brt_demo",
+      "def",
+      "demo",
+      "from",
+      "import",
+      "test",
+      "test_answer_is_42"
+    ],
+    "summary": "def test_answer_is_42(): from answer import ANSWER assert ANSWER == 42",
+    "mtime_ns": 1778415164602632800,
+    "size": 82,
+    "locations": [
+      {
+        "path": "brt_demo.py",
+        "symbol": "test_answer_is_42",
+        "kind": "function",
+        "start_line": 1,
+        "end_line": 3,
+        "score": 0.0
+      }
+    ]
+  }
+]

@@ -1,0 +1,58 @@
+[
+  {
+    "path": "skills/demo_skill.md",
+    "symbols": [],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "demo",
+      "demo_skill",
+      "llamar",
+      "para",
+      "probar",
+      "run",
+      "skill",
+      "skills",
+      "uso"
+    ],
+    "summary": "# demo_skill ## Uso Llamar run({}) para probar la skill.",
+    "mtime_ns": 1778415239406099300,
+    "size": 62,
+    "locations": []
+  },
+  {
+    "path": "skills/demo_skill.py",
+    "symbols": [
+      "run"
+    ],
+    "imports": [],
+    "references": [
+      "dict"
+    ],
+    "tokens": [
+      "def",
+      "demo",
+      "demo_skill",
+      "dict",
+      "request",
+      "return",
+      "run",
+      "skill",
+      "skills",
+      "true"
+    ],
+    "summary": "def run(request: dict) -> dict: return {'ok': True}",
+    "mtime_ns": 1778415239406099300,
+    "size": 58,
+    "locations": [
+      {
+        "path": "skills/demo_skill.py",
+        "symbol": "run",
+        "kind": "function",
+        "start_line": 1,
+        "end_line": 2,
+        "score": 0.0
+      }
+    ]
+  }
+]

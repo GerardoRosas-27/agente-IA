@@ -187,7 +187,7 @@ def generate_repro_tests(
         test_code = (
             "import pytest\n\n"
             "def test_repro_placeholder():\n"
-            "    pytest.skip('No se pudo generar BRT desde el issue. Revisar prompt.')\n"
+            "    pytest.fail('No se pudo generar BRT desde el issue. Revisar prompt.')\n"
         )
     test_path.write_text(test_code, encoding="utf-8")
 

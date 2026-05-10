@@ -1,0 +1,61 @@
+[
+  {
+    "path": "new_module.py",
+    "symbols": [
+      "unique_new_symbol"
+    ],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "def",
+      "module",
+      "new",
+      "new_module",
+      "return",
+      "symbol",
+      "unique",
+      "unique_new_symbol"
+    ],
+    "summary": "def unique_new_symbol(): return 42",
+    "mtime_ns": 1778415219335699800,
+    "size": 41,
+    "locations": [
+      {
+        "path": "new_module.py",
+        "symbol": "unique_new_symbol",
+        "kind": "function",
+        "start_line": 1,
+        "end_line": 2,
+        "score": 0.0
+      }
+    ]
+  },
+  {
+    "path": "seed.py",
+    "symbols": [
+      "seed_symbol"
+    ],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "def",
+      "return",
+      "seed",
+      "seed_symbol",
+      "symbol"
+    ],
+    "summary": "def seed_symbol(): return 1",
+    "mtime_ns": 1778415218694703300,
+    "size": 34,
+    "locations": [
+      {
+        "path": "seed.py",
+        "symbol": "seed_symbol",
+        "kind": "function",
+        "start_line": 1,
+        "end_line": 2,
+        "score": 0.0
+      }
+    ]
+  }
+]

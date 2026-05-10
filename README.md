@@ -134,10 +134,15 @@ El harness incorpora prácticas de la literatura SOTA en agentes de código:
 - **Bug Reproduction Tests** generados desde la feature antes del patch (Otter arXiv:2502.05368, BRT Agent arXiv:2502.01821)
 - **Selector EPR** (Ensemble Pass Rate) en best-of-N (BRT Agent: 70% top-1 acierto sobre 20 candidatos)
 - **Verifier determinista separado del reviewer** (MAR arXiv:2512.20845, Generator/Critic/Verifier)
+- **Adversarial reviewer (red team)** que compensa el confirmation bias del reviewer único (MAR)
 - **Replan al fallo** en lugar de reintentar el mismo plan (AdaCoder arXiv:2504.04220, CodePlan)
-- **Memoria TF-IDF resistente a distractores** (Episodic Memory paper, arXiv:2502.06975)
+- **Memoria TF-IDF + embeddings opcionales** vía `/v1/embeddings` de LM Studio (Episodic Memory paper, arXiv:2502.06975)
 - **Reflexión categorizada** post-fallo (Reflexion / SICA arXiv:2504.15228)
 - **Trayectorias persistidas + recuperación por similitud** (SICA, Darwin-Gödel arXiv:2505.22954)
+- **Análisis estático pre-patch con `ruff`** y **mutation testing** para detectar tests fantasma
+- **Retries exponenciales + circuit breaker** en el cliente LLM (robustez frente a LM Studio que se cae)
+- **Eventos JSONL estructurados** (`progress/events.jsonl`) para observabilidad y dashboards
+- **Resolución de dependencias entre features** vía `depends_on` en `feature_list.json`
 
 Activación opt-in en el ciclo del orquestador:
 
@@ -146,10 +151,19 @@ from harness.orchestrator import run_one_feature_cycle
 
 run_one_feature_cycle(
     model="...",
-    enable_brt=True,        # genera tests reproductores antes del patch
-    enable_verifier=True,   # filtra el veredicto del reviewer LLM con evidencia ejecutable
-    enable_replan=True,     # pide al Líder un plan nuevo al fallar (no reintenta el mismo)
+    enable_brt=True,                 # genera tests reproductores antes del patch
+    enable_verifier=True,            # filtra el veredicto del reviewer LLM con evidencia ejecutable
+    enable_replan=True,              # pide al Líder un plan nuevo al fallar
+    enable_adversarial_review=True,  # red-team reviewer; si discrepa del reviewer principal => FAIL
 )
+```
+
+Variables de entorno relevantes:
+
+```bash
+LLM_API_BASE_URL=http://192.168.0.4:1234/v1
+LLM_MODEL=tu-modelo-de-chat
+LLM_EMBEDDING_MODEL=bge-small        # opcional: activa embeddings reales para memoria
 ```
 
 ## Prueba opcional contra LM Studio real

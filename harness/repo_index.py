@@ -4,10 +4,23 @@ from __future__ import annotations
 import ast
 import json
 import re
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from harness.paths import PROGRESS_DIR, REPO_ROOT
+
+
+# Caché en memoria por proceso para evitar recorrer el repo varias veces dentro
+# del mismo ciclo. Clave: root.resolve(); valor: (timestamp, entries). TTL
+# pequeño para que cambios de tests con tmp_path no se mezclen.
+_INDEX_MEMORY_CACHE: dict[Path, tuple[float, list["FileIndexEntry"]]] = {}
+_INDEX_MEMORY_TTL_SECONDS = 5.0
+
+
+def clear_repo_index_memory_cache() -> None:
+    """Vacía la caché en memoria. Tests con archivos cambiantes deberían usarla."""
+    _INDEX_MEMORY_CACHE.clear()
 
 
 TOKEN_RE = re.compile(r"[a-z0-9_áéíóúñ]+", re.IGNORECASE)
@@ -203,7 +216,22 @@ def build_repo_index(
     root: Path = REPO_ROOT,
     max_file_chars: int = 2000,
     use_cache: bool = True,
+    use_memory_cache: bool = True,
 ) -> list[FileIndexEntry]:
+    """Construye el índice del repo.
+
+    Optimización (A4): cuando `use_memory_cache=True` (default) y se llama varias
+    veces dentro de un TTL corto sobre el mismo `root`, devuelve el resultado
+    cacheado en memoria. Esto evita ~3-4 escaneos repetidos por ciclo del
+    orquestador (`localize_issue` + `repo_context_for_goal` + `evaluate_changes`).
+    """
+    if use_memory_cache:
+        cache_key = root.resolve()
+        cached = _INDEX_MEMORY_CACHE.get(cache_key)
+        if cached is not None:
+            timestamp, entries_cached = cached
+            if (time.time() - timestamp) < _INDEX_MEMORY_TTL_SECONDS:
+                return list(entries_cached)
     entries: list[FileIndexEntry] = []
     cache = _load_cache(root) if use_cache else {}
     for path in root.rglob("*"):
@@ -250,6 +278,8 @@ def build_repo_index(
         )
     if use_cache:
         _save_cache(root, entries)
+    if use_memory_cache:
+        _INDEX_MEMORY_CACHE[root.resolve()] = (time.time(), list(entries))
     return entries
 
 

@@ -1,0 +1,30 @@
+[
+  {
+    "path": "webhook.py",
+    "symbols": [
+      "handle_webhook"
+    ],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "def",
+      "handle",
+      "handle_webhook",
+      "pass",
+      "webhook"
+    ],
+    "summary": "def handle_webhook(): pass",
+    "mtime_ns": 1778414769044531600,
+    "size": 33,
+    "locations": [
+      {
+        "path": "webhook.py",
+        "symbol": "handle_webhook",
+        "kind": "function",
+        "start_line": 1,
+        "end_line": 2,
+        "score": 0.0
+      }
+    ]
+  }
+]

@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable
 
+from harness.static_analysis import LintResult, lint_changed_files
 from harness.test_generator import TestRunResult
 
 
@@ -78,6 +80,7 @@ _HARD_FAIL_CHECKS = {
     "patch_sin_rejects",
     "imports_no_rotos",
     "sin_secretos_modificados",
+    "ruff_lint",
 }
 
 _PASS_THRESHOLD = 0.65
@@ -146,6 +149,25 @@ def _check_diff_size(changed_files: Iterable[str]) -> VerifierCheck:
     return VerifierCheck("diff_minimo", False, 0.5, f"{n} archivos cambiados parece excesivo")
 
 
+def _check_lint(lint: LintResult | None) -> VerifierCheck:
+    """Check basado en ruff. No bloquea si ruff no está disponible."""
+    if lint is None or not lint.available:
+        return VerifierCheck(
+            "ruff_lint",
+            True,
+            weight=0.0,
+            detail="ruff no disponible (skip)",
+        )
+    if not lint.files_checked:
+        return VerifierCheck("ruff_lint", True, weight=0.0, detail="sin archivos a lintear")
+    return VerifierCheck(
+        "ruff_lint",
+        passed=lint.ok,
+        weight=1.0,
+        detail=lint.report_line,
+    )
+
+
 def _check_brts(brts: Iterable[TestRunResult]) -> VerifierCheck:
     runs = list(brts)
     if not runs:
@@ -180,9 +202,21 @@ def verify_cycle(
     rejected: Iterable[str] = (),
     bash_ok: bool = True,
     bug_reproduction_runs: Iterable[TestRunResult] = (),
+    root: Path | None = None,
+    run_lint: bool = True,
 ) -> VerifierVerdict:
-    """Combina toda la evidencia ejecutable del ciclo en un veredicto objetivo."""
+    """Combina toda la evidencia ejecutable del ciclo en un veredicto objetivo.
+
+    Si `run_lint` y se pasa `root`, ejecuta `ruff` sobre los archivos cambiados
+    como check adicional con peso medio.
+    """
     changed_list = list(changed_files)
+    lint: LintResult | None = None
+    if run_lint and root is not None:
+        try:
+            lint = lint_changed_files(changed_list, root=root)
+        except Exception:
+            lint = None
     checks: list[VerifierCheck] = [
         _check_tests_pass(test_output),
         _check_patch_no_rejects(rejected),
@@ -190,6 +224,7 @@ def verify_cycle(
         _check_imports(validation_output),
         _check_secrets(changed_list),
         _check_diff_size(changed_list),
+        _check_lint(lint),
         _check_brts(bug_reproduction_runs),
         VerifierCheck(
             "bash_ok",

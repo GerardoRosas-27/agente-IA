@@ -71,3 +71,25 @@ def test_verify_cycle_no_brts_does_not_block_pass() -> None:
     )
 
     assert verdict.passed is True
+
+
+def test_verify_cycle_runs_ruff_when_root_is_provided(tmp_path) -> None:
+    """El verifier debe bloquear PASS si ruff detecta un error F/E."""
+    bad = tmp_path / "bad.py"
+    bad.write_text("def f():\n    return missing_name\n", encoding="utf-8")
+
+    verdict = verify_cycle(
+        test_output="Exit code: 0\n1 passed",
+        validation_output="py_compile exit=0\nimport ok",
+        changed_files=["bad.py"],
+        root=tmp_path,
+        run_lint=True,
+    )
+
+    lint_check = next(c for c in verdict.checks if c.name == "ruff_lint")
+    if lint_check.weight == 0.0:
+        # Entorno sin ruff: el check se salta por compatibilidad.
+        assert verdict.passed is True
+    else:
+        assert not lint_check.passed
+        assert verdict.passed is False

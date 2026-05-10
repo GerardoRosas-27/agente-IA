@@ -2,7 +2,7 @@
   {
     "name": "repo_index_symbols",
     "passed": true,
-    "detail": "harness/benchmarks.py, progress/impl_whatsapp_message_listener.md, api_endpoints/whatsapp_hook.py, docs/architecture.md, harness/tool_learning.py"
+    "detail": "harness/benchmarks.py, progress/impl_whatsapp_message_listener.md, api_endpoints/whatsapp_hook.py, harness/tool_learning.py, progress/archived_legacy_user_queue_20260507_144157.json"
   },
   {
     "name": "tool_read_guard",

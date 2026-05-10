@@ -1,0 +1,18 @@
+[
+  {
+    "path": "demo.py",
+    "symbols": [],
+    "imports": [],
+    "references": [
+      "VALUE"
+    ],
+    "tokens": [
+      "demo",
+      "value"
+    ],
+    "summary": "VALUE = 1",
+    "mtime_ns": 1778415219660595400,
+    "size": 11,
+    "locations": []
+  }
+]

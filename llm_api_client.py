@@ -9,11 +9,59 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 import requests
+
+
+# Circuit breaker global por proceso. Si vemos N fallos consecutivos contra el
+# mismo backend, lo abrimos durante un tiempo para no atragantarnos
+# bombardeando un LM Studio que se cayó.
+_CIRCUIT_STATE: dict[str, dict[str, float]] = {}
+_CIRCUIT_FAIL_THRESHOLD = 5
+_CIRCUIT_OPEN_SECONDS = 30.0
+_RETRY_MAX_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 1.0
+_RETRY_MAX_DELAY = 16.0
+_RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+
+
+def reset_llm_circuit() -> None:
+    """Limpia el circuit breaker; útil en tests."""
+    _CIRCUIT_STATE.clear()
+
+
+def _circuit_open(base: str) -> bool:
+    state = _CIRCUIT_STATE.get(base)
+    if not state:
+        return False
+    return time.time() < state.get("open_until", 0.0)
+
+
+def _record_circuit_failure(base: str) -> None:
+    state = _CIRCUIT_STATE.setdefault(base, {"failures": 0.0, "open_until": 0.0})
+    state["failures"] += 1
+    if state["failures"] >= _CIRCUIT_FAIL_THRESHOLD:
+        state["open_until"] = time.time() + _CIRCUIT_OPEN_SECONDS
+        # Reseteamos el contador al abrir; al volver a cerrar, contamos de cero.
+        state["failures"] = 0.0
+
+
+def _record_circuit_success(base: str) -> None:
+    state = _CIRCUIT_STATE.get(base)
+    if state:
+        state["failures"] = 0.0
+        state["open_until"] = 0.0
+
+
+def _retry_delay(attempt: int) -> float:
+    """Backoff exponencial con jitter: 1s, ~3s, ~9s..."""
+    base = min(_RETRY_BASE_DELAY * (3 ** attempt), _RETRY_MAX_DELAY)
+    return base + random.uniform(0, base * 0.25)
 
 # LM Studio (misma red que el PC con el servidor; cambia en .env si aplica)
 DEFAULT_LLM_API_BASE_URL = "http://192.168.0.4:1234/v1"
@@ -285,12 +333,54 @@ def _post_chat_completions(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    try:
-        r = requests.post(url, json=payload, headers=headers, timeout=timeout)
-        r.raise_for_status()
-        data = r.json()
-    except (requests.RequestException, json.JSONDecodeError, ValueError) as e:
-        print(f"Error de red o JSON: {e}")
+    # Circuit breaker: si el backend acumuló muchos fallos seguidos, fallar
+    # rápido sin spamearlo más. Se cierra solo al expirar la ventana.
+    if _circuit_open(base):
+        print(f"LLM circuit breaker abierto para {base}; salteando llamada.")
+        return None
+
+    data = None
+    last_error: Exception | None = None
+    for attempt in range(_RETRY_MAX_ATTEMPTS):
+        try:
+            r = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        except requests.RequestException as exc:
+            last_error = exc
+            _record_circuit_failure(base)
+            if attempt + 1 < _RETRY_MAX_ATTEMPTS:
+                time.sleep(_retry_delay(attempt))
+                continue
+            print(f"Error de red contra {base}: {exc}")
+            return None
+        # Errores HTTP retryables (5xx, 429, etc.).
+        if r.status_code in _RETRYABLE_STATUS and (attempt + 1) < _RETRY_MAX_ATTEMPTS:
+            last_error = requests.HTTPError(f"status={r.status_code}")
+            _record_circuit_failure(base)
+            time.sleep(_retry_delay(attempt))
+            continue
+        try:
+            r.raise_for_status()
+            data = r.json()
+            _record_circuit_success(base)
+            break
+        except requests.HTTPError as exc:
+            last_error = exc
+            # 4xx no retryable suelen ser configuración/payload (API key,
+            # modelo inexistente, request inválido). No deben abrir el circuit
+            # breaker porque repetir más tarde no arregla el servidor.
+            if r.status_code in _RETRYABLE_STATUS:
+                _record_circuit_failure(base)
+            print(f"Error de respuesta contra {base}: {exc}")
+            return None
+        except (json.JSONDecodeError, ValueError) as exc:
+            last_error = exc
+            # Respuesta inválida del servidor: sí cuenta como salud del backend.
+            _record_circuit_failure(base)
+            print(f"Error de respuesta contra {base}: {exc}")
+            return None
+    if data is None:
+        if last_error is not None:
+            print(f"LLM agotó {_RETRY_MAX_ATTEMPTS} reintentos: {last_error}")
         return None
 
     if is_custom_endpoint:

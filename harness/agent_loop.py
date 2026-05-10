@@ -12,6 +12,7 @@ from typing import Any, Callable
 from harness.paths import PROGRESS_DIR
 from harness.orchestrator import _apply_code_blocks, _check_command_policy, _repo_root, _resolve_repo_path, _run_tests
 from harness.repo_index import (
+    clear_repo_index_memory_cache,
     repo_context_for_goal,
     search_callers,
     search_class,
@@ -258,6 +259,8 @@ def execute_tool_action(action: dict[str, Any], *, root: Path | None = None) -> 
             return _preview_patch(body, root=root)
         checkpoint = _checkpoint_patch(body, root=root)
         result = _apply_code_blocks(f"```patch\n{body.strip()}\n```", root=root)
+        if result.changed_files:
+            clear_repo_index_memory_cache()
         return ToolObservation(
             kind,
             not result.rejected and bool(result.changed_files),

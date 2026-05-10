@@ -8,7 +8,7 @@ from pathlib import Path
 from harness.evaluator import EvaluationResult, evaluate_changes
 from harness.orchestrator import _apply_code_blocks
 from harness.reflection import build_failure_reflection
-from harness.repo_index import SymbolLocation, localize_symbols, search_repo_index
+from harness.repo_index import SymbolLocation, clear_repo_index_memory_cache, localize_symbols, search_repo_index
 from harness.trajectories import AgentTrajectory, find_similar_trajectories, save_trajectory, start_trajectory
 
 
@@ -75,6 +75,8 @@ def validate_patch_candidate(
 
     apply_result = _apply_code_blocks(f"```patch\n{patch_text.strip()}\n```", root=root)
     changed = apply_result.changed_files
+    if changed:
+        clear_repo_index_memory_cache()
     evaluation = evaluate_changes(changed, commands=extra_commands or [], root=root)
     if auto_rollback and (not evaluation.ok or apply_result.rejected):
         rollback = subprocess.run(
@@ -85,6 +87,8 @@ def validate_patch_candidate(
             text=True,
             timeout=30,
         )
+        if rollback.returncode == 0:
+            clear_repo_index_memory_cache()
         rollback_report = (
             "\n\n## Rollback automático\n"
             f"Exit code: {rollback.returncode}\n{rollback.stdout}\n{rollback.stderr}"
