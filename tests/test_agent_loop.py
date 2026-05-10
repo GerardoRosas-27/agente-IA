@@ -40,6 +40,7 @@ def test_agent_loop_runs_until_done() -> None:
         llm_call=lambda _system, _prompt: next(actions),
         max_steps=3,
         autosave=False,
+        learn_from_usage=False,
     )
 
     assert state.done

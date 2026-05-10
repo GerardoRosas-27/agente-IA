@@ -18,6 +18,15 @@ pip install -r requirements.txt
 ```
 
 Copia `.env.example` a `.env` y configura `LLM_API_BASE_URL` (debe terminar en `/v1`) y `LLM_MODEL`.
+Por defecto usa LM Studio local. Para una API potente compatible con OpenAI, usa perfiles:
+
+```bash
+python -m harness.cli agent "objetivo" --llm-profile deepseek
+python -m harness.cli run --llm-profile deepseek_v4
+```
+
+`deepseek` usa la API oficial compatible OpenAI (`https://api.deepseek.com/v1`) con `DEEPSEEK_API_KEY`.
+`deepseek_v4` queda preparado para el ID `deepseek-v4` o el que definas en `DEEPSEEK_MODEL` cuando esté disponible.
 
 ## Comandos
 
@@ -32,6 +41,7 @@ Copia `.env.example` a `.env` y configura `LLM_API_BASE_URL` (debe terminar en `
 | `python -m harness.cli evaluate archivo.py` | Ejecuta checks objetivos sobre cambios |
 | `python -m harness.cli benchmark` | Mide capacidades locales del harness |
 | `python -m harness.cli agent "objetivo"` | Ejecuta un agente con herramientas, sesiones y checkpoints |
+| `python -m harness.cli learn` | Consolida aprendizaje desde uso real del agente |
 
 También puedes usar `python -m harness` en lugar de `python -m harness.cli` (mismos subcomandos).
 
@@ -84,6 +94,14 @@ agente puede usar `rollback` contra ese checkpoint.
 El índice del repo es incremental: guarda caché en `progress/repo_index_cache/`
 y extrae símbolos, imports y referencias para mejorar la selección de contexto
 y de tests relacionados.
+
+### Autoaprendizaje real
+
+El sistema registra señales de uso del agente (`search`, `read`, `patch`,
+`test`, `command`, `rollback`, `done`) como eventos con éxito/fallo, evidencia y
+puntaje. `python -m harness.cli learn` consolida esos eventos en patrones
+persistentes (`learned_pattern`) y feedback operacional para que el router mejore
+sus recomendaciones con experiencia real, no con datasets sintéticos.
 
 ## Prueba opcional contra LM Studio real
 

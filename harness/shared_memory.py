@@ -37,6 +37,30 @@ class SelfImprovementItem:
     created_at: str
 
 
+@dataclass(frozen=True)
+class UsageEvent:
+    id: int
+    event_type: str
+    subject: str
+    goal: str
+    action: str
+    success: bool
+    score: float
+    evidence: str
+    tags: tuple[str, ...]
+    created_at: str
+
+
+@dataclass(frozen=True)
+class LearnedPattern:
+    subject: str
+    action: str
+    success_count: int
+    failure_count: int
+    score: float
+    evidence: str
+
+
 def _connect(db_path: Path = STATE_DB_PATH) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -84,6 +108,22 @@ def init_memory_db(db_path: Path = STATE_DB_PATH) -> None:
                 proposal TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 evidence TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS usage_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                goal TEXT NOT NULL,
+                action TEXT NOT NULL,
+                success INTEGER NOT NULL,
+                score REAL NOT NULL,
+                evidence TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL
             )
             """
@@ -233,6 +273,125 @@ def record_skill_usage(
                 now,
             ),
         )
+
+
+def record_usage_event(
+    event_type: str,
+    subject: str,
+    goal: str,
+    action: str,
+    *,
+    success: bool,
+    evidence: str = "",
+    score: float | None = None,
+    tags: list[str] | tuple[str, ...] | None = None,
+    db_path: Path = STATE_DB_PATH,
+) -> None:
+    """Registra una señal de uso real para aprendizaje posterior."""
+    init_memory_db(db_path)
+    now = datetime.now().isoformat(timespec="seconds")
+    value = float(score if score is not None else (1.0 if success else -1.0))
+    tag_text = json.dumps(list(tags or []), ensure_ascii=False)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO usage_events
+                (event_type, subject, goal, action, success, score, evidence, tags, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_type,
+                subject,
+                goal,
+                action,
+                1 if success else 0,
+                value,
+                evidence,
+                tag_text,
+                now,
+            ),
+        )
+
+
+def _row_to_usage_event(row: sqlite3.Row) -> UsageEvent:
+    try:
+        tags = tuple(json.loads(row["tags"] or "[]"))
+    except (json.JSONDecodeError, TypeError):
+        tags = ()
+    return UsageEvent(
+        id=int(row["id"]),
+        event_type=str(row["event_type"]),
+        subject=str(row["subject"]),
+        goal=str(row["goal"]),
+        action=str(row["action"]),
+        success=bool(row["success"]),
+        score=float(row["score"]),
+        evidence=str(row["evidence"]),
+        tags=tags,
+        created_at=str(row["created_at"]),
+    )
+
+
+def list_usage_events(
+    *,
+    event_type: str | None = None,
+    subject: str | None = None,
+    limit: int = 200,
+    db_path: Path = STATE_DB_PATH,
+) -> list[UsageEvent]:
+    init_memory_db(db_path)
+    sql = "SELECT * FROM usage_events"
+    params: list[Any] = []
+    clauses: list[str] = []
+    if event_type:
+        clauses.append("event_type = ?")
+        params.append(event_type)
+    if subject:
+        clauses.append("subject = ?")
+        params.append(subject)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY id DESC LIMIT ?"
+    params.append(int(limit))
+    with _connect(db_path) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_usage_event(row) for row in rows]
+
+
+def consolidate_usage_events(
+    *,
+    event_type: str | None = None,
+    limit: int = 500,
+    db_path: Path = STATE_DB_PATH,
+) -> list[LearnedPattern]:
+    """Agrupa eventos recientes en patrones que la memoria puede reutilizar."""
+    events = list_usage_events(event_type=event_type, limit=limit, db_path=db_path)
+    grouped: dict[tuple[str, str], list[UsageEvent]] = {}
+    for event in events:
+        grouped.setdefault((event.subject, event.action), []).append(event)
+
+    patterns: list[LearnedPattern] = []
+    for (subject, action), items in grouped.items():
+        successes = sum(1 for item in items if item.success)
+        failures = sum(1 for item in items if not item.success)
+        score = sum(item.score for item in items)
+        evidence = " | ".join(item.evidence[:180] for item in items[:3] if item.evidence)
+        pattern = LearnedPattern(subject, action, successes, failures, score, evidence)
+        patterns.append(pattern)
+        remember(
+            "learned_pattern",
+            f"{subject}:{action}",
+            (
+                f"Uso real de `{subject}` acción `{action}`: "
+                f"éxitos={successes}, fallos={failures}, score={score:.2f}. "
+                f"Evidencia: {evidence or 'sin evidencia'}"
+            ),
+            tags=["runtime_learning", subject, action],
+            confidence=max(0.1, min(1.0, 0.5 + (score / max(len(items), 1)) / 2)),
+            db_path=db_path,
+        )
+    patterns.sort(key=lambda item: item.score, reverse=True)
+    return patterns
 
 
 def skill_memory_context(limit: int = 8, db_path: Path = STATE_DB_PATH) -> str:

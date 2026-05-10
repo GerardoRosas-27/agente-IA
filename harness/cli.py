@@ -11,7 +11,7 @@ from llm_api_client import resolve_llm_chat_for_pipeline
 from harness.agent_loop import load_agent_session, run_agent_loop, save_agent_session
 from harness.benchmarks import benchmark_summary, run_benchmarks
 from harness.evaluator import evaluate_changes
-from harness.auto_training import latest_training_context, run_training_cycle
+from harness.auto_training import consolidate_runtime_learning, latest_training_context, run_training_cycle
 from harness.feature_store import (
     load_feature_list,
     validate_feature_list,
@@ -111,6 +111,11 @@ def _cmd_train(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_learn(args: argparse.Namespace) -> int:
+    print(consolidate_runtime_learning(limit=args.limit))
+    return 0
+
+
 def _cmd_index(args: argparse.Namespace) -> int:
     print(repo_context_for_goal(args.query, root=REPO_ROOT, limit=args.limit))
     return 0
@@ -131,7 +136,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
 
 
 def _cmd_agent(args: argparse.Namespace) -> int:
-    llm_chat, model, label = resolve_llm_chat_for_pipeline(args.llm_model or "")
+    llm_chat, model, label = resolve_llm_chat_for_pipeline(args.llm_model or "", args.llm_profile or "")
     print(f"LLM: {label} - modelo {model}")
 
     initial_state = None
@@ -177,7 +182,7 @@ def _cmd_agent(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    llm_chat, model, label = resolve_llm_chat_for_pipeline(args.llm_model or "")
+    llm_chat, model, label = resolve_llm_chat_for_pipeline(args.llm_model or "", args.llm_profile or "")
     print(f"LLM: {label} - modelo {model}")
 
     def log(m: str) -> None:
@@ -204,7 +209,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_expand(args: argparse.Namespace) -> int:
-    llm_chat, model, label = resolve_llm_chat_for_pipeline(args.llm_model or "")
+    llm_chat, model, label = resolve_llm_chat_for_pipeline(args.llm_model or "", args.llm_profile or "")
     print(f"LLM: {label} - modelo {model}")
     try:
         n = expand_features_from_goal(
@@ -256,6 +261,10 @@ def build_parser() -> argparse.ArgumentParser:
     s_train.add_argument("goal", help="Objetivo/tarea de entrenamiento")
     s_train.set_defaults(func=_cmd_train)
 
+    s_learn = sub.add_parser("learn", help="Consolida aprendizaje desde uso real del agente")
+    s_learn.add_argument("--limit", type=int, default=500)
+    s_learn.set_defaults(func=_cmd_learn)
+
     s_index = sub.add_parser("index", help="Busca contexto relevante en el indice del repo")
     s_index.add_argument("query", help="Consulta para buscar en simbolos, imports y texto")
     s_index.add_argument("--limit", type=int, default=8)
@@ -275,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     s_agent.add_argument("--resume", default="", help="ID de sesión para reanudar")
     s_agent.add_argument("--session", default="", help="ID de sesión para guardar progreso")
     s_agent.add_argument("--llm-model", default="", help="Sobrescribe modelo del perfil LLM")
+    s_agent.add_argument("--llm-profile", default="", help="Perfil LLM: default, deepseek, deepseek_v4 u otro")
     s_agent.add_argument("--max-steps", type=int, default=8)
     s_agent.add_argument("--num-predict", type=int, default=1800)
     s_agent.add_argument("--temperature", type=float, default=0.2)
@@ -288,6 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Sobrescribe LLM_MODEL del .env",
     )
+    s_run.add_argument("--llm-profile", default="", help="Perfil LLM: default, deepseek, deepseek_v4 u otro")
     s_run.add_argument("--num-predict-leader", type=int, default=1200)
     s_run.add_argument("--num-predict-worker", type=int, default=2800)
     s_run.set_defaults(func=_cmd_run)
@@ -298,6 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     s_ex.add_argument("goal", help="Texto del producto / alcance")
     s_ex.add_argument("--llm-model", default="", help="Sobrescribe LLM_MODEL del .env")
+    s_ex.add_argument("--llm-profile", default="", help="Perfil LLM: default, deepseek, deepseek_v4 u otro")
     s_ex.add_argument("--num-predict", type=int, default=4000)
     s_ex.set_defaults(func=_cmd_expand)
 

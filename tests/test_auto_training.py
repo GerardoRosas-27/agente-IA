@@ -4,7 +4,9 @@ from pathlib import Path
 
 from harness.auto_training import (
     build_training_plan,
+    consolidate_runtime_learning,
     latest_training_context,
+    record_agent_observation,
     record_user_session_training,
     run_training_cycle,
 )
@@ -76,3 +78,21 @@ def test_record_user_session_training_persists_session_and_skill_usage(tmp_path)
     assert memories
     assert recommendations
     assert recommendations[0].skill_name == "internet_search_api"
+
+
+def test_record_agent_observation_and_consolidate_runtime_learning(tmp_path):
+    db_path = tmp_path / "state.db"
+
+    record_agent_observation(
+        "arreglar tests",
+        "test",
+        ok=True,
+        content="Exit code: 0\n2 passed",
+        db_path=db_path,
+    )
+    summary = consolidate_runtime_learning(db_path=db_path)
+    memories = recall(scope="runtime_learning_summary", db_path=db_path)
+
+    assert "Patrones consolidados" in summary
+    assert "test_runner/test" in summary
+    assert memories

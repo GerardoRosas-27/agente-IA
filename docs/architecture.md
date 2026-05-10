@@ -15,6 +15,14 @@
 | `harness/benchmarks.py` | Benchmarks locales para medir capacidades del harness |
 | **`api_endpoints/whatsapp_hook.py`** | **Maneja la recepción, verificación y parsing de payloads Webhook externos (ej. WhatsApp).** |
 
+## Backends LLM
+
+El backend por defecto sigue siendo LM Studio local mediante `LLM_API_BASE_URL`
+y `LLM_MODEL`. `llm_api_client.py` también soporta perfiles OpenAI-compatible.
+Para DeepSeek oficial se puede usar `--llm-profile deepseek` o
+`LLM_PROFILE=deepseek` con `DEEPSEEK_API_KEY`. El alias `deepseek_v4` queda listo
+para usar un modelo futuro `deepseek-v4` o el valor explícito de `DEEPSEEK_MODEL`.
+
 ## Flujo de un ciclo `run`
 
 1. Reclamar la siguiente `pending` (o continuar `in_progress`).
@@ -57,6 +65,14 @@ El índice de repositorio mantiene caché incremental en
 `progress/repo_index_cache/` y extrae símbolos, imports y referencias de Python.
 El evaluador usa este grafo para encontrar tests relacionados aunque no sigan
 solo la convención `tests/test_<modulo>.py`.
+
+## Autoaprendizaje por uso real
+
+Cada observación del modo agente puede generar un evento en `usage_events`:
+acción, objetivo, éxito/fallo, evidencia y puntaje. `harness.auto_training`
+consolida esos eventos en patrones aprendidos (`learned_pattern`) y en feedback
+para `skill_usage`, de modo que el router aprende de acciones reales que pasaron
+tests o fallaron, no de datasets sintéticos versionados.
 
 ## Flujo de Datos Externos: Recepción de Mensajes (WhatsApp Webhook)
 

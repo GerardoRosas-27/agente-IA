@@ -3,7 +3,9 @@ from pathlib import Path
 from harness.shared_memory import (
     add_self_improvement,
     list_self_improvements,
+    list_usage_events,
     recall,
+    record_usage_event,
     record_skill_usage,
     remember,
     self_improvement_context,
@@ -94,3 +96,27 @@ def test_semantic_recall_finds_token_overlap_without_exact_phrase(tmp_path: Path
 
     assert items
     assert items[0].key == "repo_index"
+
+
+def test_usage_events_are_recorded_and_consolidated(tmp_path: Path) -> None:
+    from harness.shared_memory import consolidate_usage_events
+
+    db_path = tmp_path / "memory.db"
+    record_usage_event(
+        "agent_observation",
+        "repo_index",
+        "buscar contexto",
+        "search",
+        success=True,
+        score=1.0,
+        evidence="encontró archivos relevantes",
+        db_path=db_path,
+    )
+
+    events = list_usage_events(event_type="agent_observation", db_path=db_path)
+    patterns = consolidate_usage_events(event_type="agent_observation", db_path=db_path)
+
+    assert len(events) == 1
+    assert patterns[0].subject == "repo_index"
+    assert patterns[0].success_count == 1
+    assert recall(scope="learned_pattern", query="repo_index", db_path=db_path)

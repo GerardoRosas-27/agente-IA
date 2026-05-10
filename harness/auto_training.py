@@ -9,7 +9,14 @@ from datetime import datetime
 from pathlib import Path
 
 from harness.paths import PROGRESS_DIR, STATE_DB_PATH
-from harness.shared_memory import recall, record_skill_usage, remember
+from harness.shared_memory import (
+    consolidate_usage_events,
+    list_usage_events,
+    recall,
+    record_skill_usage,
+    record_usage_event,
+    remember,
+)
 from harness.tool_learning import ToolRecommendation, build_tool_reuse_plan
 
 
@@ -39,6 +46,19 @@ class TrainingCycleResult:
     learned_skills: tuple[str, ...]
     memory_key: str
     report_path: str
+
+
+ACTION_SUBJECTS = {
+    "search": "repo_index",
+    "read": "repo_reader",
+    "patch_preview": "patch_planner",
+    "patch": "patch_applier",
+    "rollback": "patch_rollback",
+    "test": "test_runner",
+    "command": "shell_runner",
+    "done": "agent_loop",
+    "parse": "agent_loop",
+}
 
 
 def _slug(value: str) -> str:
@@ -217,6 +237,102 @@ def latest_training_context(*, limit: int = 5, db_path: Path = STATE_DB_PATH) ->
     for item in memories:
         chunks.append(f"- `{item.key}`: {item.value[:500]}")
     return "\n".join(chunks)
+
+
+def _score_for_observation(action: str, ok: bool, content: str) -> float:
+    if not ok:
+        return -1.0
+    if action == "done":
+        return 1.5
+    if "Exit code: 0" in content or "passed" in content:
+        return 1.25
+    if action == "patch_preview":
+        return 0.35
+    if action == "read":
+        return 0.2
+    return 0.75
+
+
+def record_agent_observation(
+    goal: str,
+    action: str,
+    *,
+    ok: bool,
+    content: str,
+    db_path: Path = STATE_DB_PATH,
+) -> None:
+    """Convierte observaciones reales del agente en señales de aprendizaje."""
+    subject = ACTION_SUBJECTS.get(action, action or "unknown")
+    score = _score_for_observation(action, ok, content)
+    record_usage_event(
+        "agent_observation",
+        subject,
+        goal,
+        action,
+        success=ok,
+        score=score,
+        evidence=content[:800],
+        tags=["agent_loop", action, "real_usage"],
+        db_path=db_path,
+    )
+    remember(
+        "agent_observation",
+        f"{subject}_{int(time.time() * 1000)}",
+        f"Objetivo: {goal}. Acción: {action}. ok={ok}. score={score:.2f}. Evidencia: {content[:500]}",
+        tags=["agent_loop", subject, action],
+        confidence=max(0.1, min(1.0, 0.5 + score / 2)),
+        db_path=db_path,
+    )
+
+
+def consolidate_runtime_learning(
+    *,
+    db_path: Path = STATE_DB_PATH,
+    limit: int = 500,
+) -> str:
+    """Consolida eventos reales en patrones y feedback operacional."""
+    patterns = consolidate_usage_events(event_type="agent_observation", limit=limit, db_path=db_path)
+    if not patterns:
+        return "No hay eventos de uso real para consolidar."
+
+    for pattern in patterns:
+        success = pattern.score >= 0
+        record_skill_usage(
+            pattern.subject,
+            f"runtime:{pattern.action}",
+            (
+                f"Aprendido de uso real del agente. Acción `{pattern.action}` "
+                f"con éxitos={pattern.success_count}, fallos={pattern.failure_count}, "
+                f"score={pattern.score:.2f}. Evidencia: {pattern.evidence}"
+            ),
+            success=success,
+            outcome="runtime_learning_consolidated",
+            db_path=db_path,
+        )
+
+    recent_events = list_usage_events(event_type="agent_observation", limit=5, db_path=db_path)
+    remember(
+        "runtime_learning_summary",
+        f"summary_{int(time.time() * 1000)}",
+        json.dumps(
+            {
+                "patterns": [pattern.__dict__ for pattern in patterns[:20]],
+                "recent_events": [event.__dict__ for event in recent_events],
+            },
+            ensure_ascii=False,
+        ),
+        tags=["runtime_learning", "consolidated"],
+        confidence=0.95,
+        db_path=db_path,
+    )
+
+    lines = [f"Patrones consolidados: {len(patterns)}"]
+    for pattern in patterns[:10]:
+        lines.append(
+            f"- {pattern.subject}/{pattern.action}: score={pattern.score:.2f}, "
+            f"éxitos={pattern.success_count}, fallos={pattern.failure_count}"
+        )
+    return "\n".join(lines)
 
 
 def record_user_session_training(

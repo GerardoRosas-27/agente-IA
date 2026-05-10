@@ -18,6 +18,9 @@ import requests
 # LM Studio (misma red que el PC con el servidor; cambia en .env si aplica)
 DEFAULT_LLM_API_BASE_URL = "http://192.168.0.4:1234/v1"
 DEFAULT_LLM_MODEL = "xiaomi-mimo-vl-miloco-7b"
+DEEPSEEK_API_BASE_URL = "https://api.deepseek.com/v1"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
+DEEPSEEK_V4_DEFAULT_MODEL = "deepseek-v4"
 
 _ENV_LOADED = False
 
@@ -35,6 +38,10 @@ class LLMProfile:
 def _env_name_for_profile(profile: str, suffix: str) -> str:
     clean = "".join(ch if ch.isalnum() else "_" for ch in profile.upper()).strip("_")
     return f"LLM_{clean}_{suffix}"
+
+
+def _deepseek_env(suffix: str) -> str:
+    return f"DEEPSEEK_{suffix}"
 
 
 def _load_env_file() -> None:
@@ -94,12 +101,38 @@ def get_resolved_model(cli_fallback: str = "") -> str:
 def resolve_llm_profile(profile: str = "", *, cli_model: str = "") -> LLMProfile:
     """Resuelve backend/modelo por perfil sin acoplar el harness a un único servidor."""
     _load_env_file()
-    profile_name = (profile or os.getenv("LLM_PROFILE") or "default").strip() or "default"
+    profile_name = (profile or os.getenv("LLM_PROFILE") or "default").strip().lower() or "default"
     if profile_name == "default":
         base = (os.getenv("LLM_API_BASE_URL") or DEFAULT_LLM_API_BASE_URL).strip().rstrip("/")
         model = (cli_model or os.getenv("LLM_MODEL") or DEFAULT_LLM_MODEL).strip()
         api_key = (os.getenv("LLM_API_KEY") or "").strip()
         timeout = float(os.getenv("LLM_HTTP_TIMEOUT", "300") or "300")
+    elif profile_name in {"deepseek", "deepseek_v4", "deepseek-v4"}:
+        is_v4_alias = profile_name in {"deepseek_v4", "deepseek-v4"}
+        model_default = DEEPSEEK_V4_DEFAULT_MODEL if is_v4_alias else DEEPSEEK_DEFAULT_MODEL
+        profile_model_key = _env_name_for_profile(profile_name, "MODEL")
+        base = (
+            os.getenv(_deepseek_env("API_BASE_URL"))
+            or os.getenv(_env_name_for_profile(profile_name, "API_BASE_URL"))
+            or DEEPSEEK_API_BASE_URL
+        ).strip().rstrip("/")
+        model = (
+            cli_model
+            or os.getenv(_deepseek_env("MODEL"))
+            or os.getenv(profile_model_key)
+            or model_default
+        ).strip()
+        api_key = (
+            os.getenv(_deepseek_env("API_KEY"))
+            or os.getenv(_env_name_for_profile(profile_name, "API_KEY"))
+            or ""
+        ).strip()
+        timeout = float(
+            os.getenv(_deepseek_env("HTTP_TIMEOUT"))
+            or os.getenv(_env_name_for_profile(profile_name, "HTTP_TIMEOUT"))
+            or os.getenv("LLM_HTTP_TIMEOUT", "300")
+            or "300"
+        )
     else:
         base = (
             os.getenv(_env_name_for_profile(profile_name, "API_BASE_URL"))
@@ -124,6 +157,22 @@ def resolve_llm_profile(profile: str = "", *, cli_model: str = "") -> LLMProfile
         )
     label = f"LLM profile {profile_name} ({base})"
     return LLMProfile(profile_name, base, model, api_key, timeout, label)
+
+
+def make_openai_compatible_chat(profile: LLMProfile) -> Callable[..., Any]:
+    """Crea una función chat fijada a un perfil concreto."""
+
+    def _chat(model: str, messages: list, options: dict | None = None) -> dict | None:
+        return _post_chat_completions(
+            profile.base_url,
+            model or profile.model,
+            messages,
+            options,
+            timeout=profile.timeout,
+            api_key=profile.api_key,
+        )
+
+    return _chat
 
 
 def parse_assistant_message(r: Any) -> str | None:
@@ -306,24 +355,17 @@ def remote_openai_chat(
     profile = resolve_llm_profile()
     if not profile.base_url:
         return None
-    return _post_chat_completions(
-        profile.base_url,
-        model,
-        messages,
-        options,
-        timeout=profile.timeout,
-        api_key=profile.api_key,
-    )
+    return make_openai_compatible_chat(profile)(model, messages, options)
 
 
-def resolve_llm_chat_for_pipeline(cli_model: str) -> tuple[Callable[..., Any], str, str]:
+def resolve_llm_chat_for_pipeline(cli_model: str, profile_name: str = "") -> tuple[Callable[..., Any], str, str]:
     """
     Retorna (remote_openai_chat, model_id, etiqueta).
-    Siempre la API de LM Studio (URL y modelo vía .env; hay valores por defecto en código).
+    Default: LM Studio local. Opcional: perfiles OpenAI-compatible como DeepSeek.
     """
-    profile = resolve_llm_profile(cli_model=cli_model)
+    profile = resolve_llm_profile(profile_name, cli_model=cli_model)
     return (
-        remote_openai_chat,
+        make_openai_compatible_chat(profile),
         profile.model,
         profile.label,
     )

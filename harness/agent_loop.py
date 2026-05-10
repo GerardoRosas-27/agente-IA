@@ -282,6 +282,7 @@ def run_agent_loop(
     initial_state: AgentLoopState | None = None,
     session_id: str = "",
     autosave: bool = True,
+    learn_from_usage: bool = True,
 ) -> AgentLoopState:
     """Ejecuta un loop observar -> actuar -> observar con herramientas controladas."""
     state = initial_state or AgentLoopState(goal=goal, session_id=session_id)
@@ -303,6 +304,13 @@ def run_agent_loop(
             continue
         observation = execute_tool_action(action)
         state.observations.append(observation)
+        if learn_from_usage:
+            try:
+                from harness.auto_training import record_agent_observation
+
+                record_agent_observation(goal, observation.action, ok=observation.ok, content=observation.content)
+            except Exception:
+                pass
         if on_event:
             on_event(observation)
         if autosave:
