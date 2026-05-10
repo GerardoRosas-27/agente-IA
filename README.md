@@ -78,7 +78,12 @@ python -m harness.cli agent --resume webhook_fix
 El agente usa acciones JSON internas (`search`, `read`, `patch`, `test`,
 `command`, `done`). Los patches primero se previsualizan; solo se aplican si el
 modelo repite la acción con `apply=true`, y cada aplicación guarda un checkpoint
-en `progress/agent_sessions/checkpoints/`.
+en `progress/agent_sessions/checkpoints/`. Si un patch aplicado sale mal, el
+agente puede usar `rollback` contra ese checkpoint.
+
+El índice del repo es incremental: guarda caché en `progress/repo_index_cache/`
+y extrae símbolos, imports y referencias para mejorar la selección de contexto
+y de tests relacionados.
 
 ## Prueba opcional contra LM Studio real
 

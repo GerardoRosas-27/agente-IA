@@ -125,6 +125,46 @@ def _checkpoint_patch(action_patch: str, *, root: Path) -> Path:
     return path
 
 
+def _requested_patch_from_checkpoint(path: Path) -> str:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    marker = "## Patch solicitado"
+    if marker not in text:
+        return text
+    section = text.split(marker, 1)[1]
+    if "```patch" in section:
+        section = section.split("```patch", 1)[1]
+        section = section.split("```", 1)[0]
+    return section.strip("\r\n") + "\n"
+
+
+def rollback_checkpoint(checkpoint_path: str, *, root: Path | None = None) -> ToolObservation:
+    root = root or _repo_root()
+    full_path, reason = _resolve_repo_path(checkpoint_path, root)
+    if full_path is None:
+        # Checkpoints normally live under progress and may be passed as absolute-ish UI text.
+        candidate = Path(checkpoint_path)
+        if candidate.is_absolute() and candidate.is_file():
+            full_path = candidate
+        else:
+            return ToolObservation("rollback", False, reason)
+    if not full_path.is_file():
+        return ToolObservation("rollback", False, f"No existe checkpoint: {checkpoint_path}")
+    patch_text = _requested_patch_from_checkpoint(full_path)
+    process = subprocess.run(
+        ["git", "apply", "-R", "--whitespace=nowarn"],
+        cwd=str(root),
+        input=patch_text,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return ToolObservation(
+        "rollback",
+        process.returncode == 0,
+        f"Exit code: {process.returncode}\n{process.stdout}\n{process.stderr}".strip(),
+    )
+
+
 def _preview_patch(patch_text: str, *, root: Path) -> ToolObservation:
     process = subprocess.run(
         ["git", "apply", "--check", "--whitespace=nowarn"],
@@ -211,6 +251,9 @@ def execute_tool_action(action: dict[str, Any], *, root: Path | None = None) -> 
             f"Exit code: {completed.returncode}\n{completed.stdout}\n{completed.stderr}".strip(),
         )
 
+    if kind == "rollback":
+        return rollback_checkpoint(str(action.get("checkpoint") or ""), root=root)
+
     if kind == "done":
         return ToolObservation(kind, True, str(action.get("summary") or "Tarea terminada."))
 
@@ -225,6 +268,7 @@ Acciones disponibles:
 {"action":"patch","patch":"diff unificado","apply":true}  // aplica con checkpoint
 {"action":"test","files":["ruta.py"]}
 {"action":"command","command":"python -m pytest ...","timeout":60}
+{"action":"rollback","checkpoint":"progress/agent_sessions/checkpoints/archivo.patch"}
 {"action":"done","summary":"..."}
 No uses comandos destructivos. Primero previsualiza patches; aplica solo cuando estés seguro."""
 

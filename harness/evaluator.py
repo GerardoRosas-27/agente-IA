@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from harness.orchestrator import _check_command_policy, _related_test_paths, _repo_root
+from harness.repo_index import related_tests_for_files
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,15 @@ def evaluate_changes(
         checks.append("py_compile")
         reports.append(output)
 
-    related_tests = _related_test_paths(changed_files)
+        package_dirs = sorted({str(Path(item).parent).replace("\\", "/") for item in python_files if Path(item).parent != Path(".")})
+        if package_dirs:
+            compileall_cmd = [sys.executable, "-m", "compileall", "-q", *package_dirs]
+            check_ok, output = _run(compileall_cmd, root=root, timeout=45)
+            ok = ok and check_ok
+            checks.append("compileall_related_dirs")
+            reports.append(output)
+
+    related_tests = list(dict.fromkeys([*_related_test_paths(changed_files), *related_tests_for_files(changed_files, root=root)]))
     if related_tests:
         test_cmd = [sys.executable, "-m", "pytest", *related_tests, "-q", "--tb=short"]
         check_ok, output = _run(test_cmd, root=root, timeout=90)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from harness.repo_index import build_repo_index, repo_context_for_goal, search_repo_index
+from harness.repo_index import build_repo_graph, build_repo_index, related_tests_for_files, repo_context_for_goal, search_repo_index
 
 
 def test_repo_index_extracts_python_symbols(tmp_path: Path) -> None:
@@ -21,6 +21,7 @@ def test_repo_index_extracts_python_symbols(tmp_path: Path) -> None:
     assert "DemoTool" in entry.symbols
     assert "run" in entry.symbols
     assert "json" in entry.imports
+    assert "dumps" in entry.references
 
 
 def test_repo_index_search_returns_related_files(tmp_path: Path) -> None:
@@ -32,3 +33,32 @@ def test_repo_index_search_returns_related_files(tmp_path: Path) -> None:
 
     assert matches[0].path == "alpha.py"
     assert "alpha.py" in context
+
+
+def test_repo_index_cache_reuses_unchanged_entries(tmp_path: Path, monkeypatch) -> None:
+    cache_dir = tmp_path / "progress"
+    monkeypatch.setattr("harness.repo_index.PROGRESS_DIR", cache_dir)
+    source = tmp_path / "module.py"
+    source.write_text("def alpha():\n    return 1\n", encoding="utf-8")
+
+    first = build_repo_index(root=tmp_path)
+    second = build_repo_index(root=tmp_path)
+
+    assert first == second
+    assert list((cache_dir / "repo_index_cache").glob("*.json"))
+
+
+def test_repo_graph_and_related_tests_use_symbols_and_imports(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from src.calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    graph = build_repo_graph(root=tmp_path)
+    related = related_tests_for_files(["src/calc.py"], root=tmp_path)
+
+    assert "add" in graph.symbol_to_files
+    assert related == ["tests/test_calc.py"]

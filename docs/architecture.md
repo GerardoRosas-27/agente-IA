@@ -50,7 +50,13 @@ más potente y seguro:
 estado persistente en `progress/agent_sessions/`. Cada observación se guarda
 para poder reanudar con `--resume`. Los patches se previsualizan por defecto y
 solo se aplican con `apply=true`; antes de aplicar se guarda un checkpoint con
-el diff previo y el patch solicitado.
+el diff previo y el patch solicitado. El agente también puede ejecutar
+`rollback` sobre un checkpoint para revertir el patch aplicado.
+
+El índice de repositorio mantiene caché incremental en
+`progress/repo_index_cache/` y extrae símbolos, imports y referencias de Python.
+El evaluador usa este grafo para encontrar tests relacionados aunque no sigan
+solo la convención `tests/test_<modulo>.py`.
 
 ## Flujo de Datos Externos: Recepción de Mensajes (WhatsApp Webhook)
 

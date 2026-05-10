@@ -7,6 +7,7 @@ from harness.agent_loop import (
     AgentLoopState,
     execute_tool_action,
     load_agent_session,
+    rollback_checkpoint,
     run_agent_loop,
     save_agent_session,
 )
@@ -92,3 +93,24 @@ new file mode 100644
     assert (tmp_path / "demo.txt").read_text(encoding="utf-8") == "hola\n"
     assert "Checkpoint:" in applied.content
     assert list((checkpoint_root / "agent_sessions" / "checkpoints").glob("*.patch"))
+
+
+def test_rollback_checkpoint_reverses_applied_patch(tmp_path: Path, monkeypatch) -> None:
+    subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True, text=True, check=True)
+    checkpoint_root = tmp_path / "progress"
+    monkeypatch.setattr("harness.agent_loop.PROGRESS_DIR", checkpoint_root)
+    patch = """diff --git a/demo.txt b/demo.txt
+new file mode 100644
+--- /dev/null
++++ b/demo.txt
+@@ -0,0 +1 @@
++hola
+"""
+    applied = execute_tool_action({"action": "patch", "patch": patch, "apply": True}, root=tmp_path)
+    checkpoint = list((checkpoint_root / "agent_sessions" / "checkpoints").glob("*.patch"))[0]
+
+    rolled_back = rollback_checkpoint(str(checkpoint), root=tmp_path)
+
+    assert applied.ok
+    assert rolled_back.ok
+    assert not (tmp_path / "demo.txt").exists()
