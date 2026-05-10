@@ -10,6 +10,7 @@ from harness.shared_memory import (
     remember,
     self_improvement_context,
     semantic_recall,
+    semantic_recall_v2,
     shared_memory_context,
     skill_memory_context,
 )
@@ -96,6 +97,44 @@ def test_semantic_recall_finds_token_overlap_without_exact_phrase(tmp_path: Path
 
     assert items
     assert items[0].key == "repo_index"
+
+
+def test_semantic_recall_v2_resists_distractors(tmp_path: Path) -> None:
+    """Reproduce el escenario del paper de Episodic Memory: muchos distractores y la
+    consulta debe recuperar el item relevante en el top-3 vía TF-IDF."""
+    db_path = tmp_path / "memory.db"
+    remember(
+        "trajectory",
+        "webhook_fix",
+        "Reparado el parser de webhook de WhatsApp para mensajes multimedia con sender_id correcto.",
+        tags=["whatsapp", "webhook", "media"],
+        db_path=db_path,
+    )
+    distractor_topics = [
+        ("config_csv", "Cómo exportar configuraciones a CSV en disco."),
+        ("logs_rotation", "Rotación automática de archivos de log por tamaño."),
+        ("date_parser", "Parser de fechas en distintos formatos ISO y locales."),
+        ("queue_dispatch", "Despachador de cola con prioridad para tareas batch."),
+        ("pdf_render", "Render de plantillas a PDF con tipografías personalizadas."),
+        ("retry_policy", "Política de reintento exponencial para clientes HTTP."),
+        ("session_pool", "Pool de sesiones con reciclaje al exceder N requests."),
+        ("crypto_keys", "Carga segura de claves de cifrado desde Vault."),
+        ("graph_layout", "Algoritmos de layout para grafos dirigidos."),
+        ("sql_migration", "Migraciones SQL idempotentes con bandera DOWN."),
+    ]
+    for key, value in distractor_topics:
+        remember("trajectory", key, value, tags=["distractor"], db_path=db_path)
+
+    results = semantic_recall_v2(
+        query="error recibiendo media en webhook de WhatsApp con remitente",
+        db_path=db_path,
+        limit=3,
+    )
+
+    assert results, "semantic_recall_v2 no devolvió resultados"
+    keys_top3 = [item.key for item in results]
+    assert "webhook_fix" in keys_top3, f"se esperaba webhook_fix en top-3, obtuvo {keys_top3}"
+    assert keys_top3[0] == "webhook_fix", f"se esperaba webhook_fix en posición 1, obtuvo {keys_top3}"
 
 
 def test_usage_events_are_recorded_and_consolidated(tmp_path: Path) -> None:

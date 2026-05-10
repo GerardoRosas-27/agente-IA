@@ -1,6 +1,7 @@
 """Persistencia de trayectorias completas de agentes de código."""
 from __future__ import annotations
 
+import heapq
 import json
 import re
 import time
@@ -129,22 +130,38 @@ def find_similar_trajectories(
     query_tokens = tokenize(goal)
     if not query_tokens:
         return []
-    scored: list[tuple[float, AgentTrajectory]] = []
+    query_size = len(query_tokens)
+    candidates: list[tuple[float, str, AgentTrajectory]] = []
     for trajectory in list_trajectories(base_dir=base_dir):
-        haystack = " ".join(
-            [
-                trajectory.goal,
-                trajectory.verdict,
-                trajectory.reflection,
-                *[step.action for step in trajectory.steps],
-                *[step.observation[:500] for step in trajectory.steps],
-            ]
-        )
-        overlap = query_tokens & tokenize(haystack)
-        if overlap:
-            score = len(overlap) / len(query_tokens)
-            if trajectory.verdict == "pass":
-                score += 0.15
-            scored.append((score, trajectory))
-    scored.sort(key=lambda item: (-item[0], item[1].trajectory_id))
-    return [trajectory for _score, trajectory in scored[: max(limit, 0)]]
+        # Tokeniza incrementalmente para que cada string corto pase por el regex
+        # y para evitar construir un haystack gigante con `" ".join(...)` cuando
+        # las trayectorias incluyen observaciones largas.
+        haystack_tokens: set[str] = set()
+        haystack_tokens |= tokenize(trajectory.goal)
+        if trajectory.verdict:
+            haystack_tokens |= tokenize(trajectory.verdict)
+        if trajectory.reflection:
+            haystack_tokens |= tokenize(trajectory.reflection)
+        for step in trajectory.steps:
+            haystack_tokens |= tokenize(step.action)
+            haystack_tokens |= tokenize(step.observation[:500])
+            if query_tokens <= haystack_tokens:
+                # Cobertura total de la consulta: ya no aporta seguir tokenizando.
+                break
+        overlap = query_tokens & haystack_tokens
+        if not overlap:
+            continue
+        score = len(overlap) / query_size
+        if trajectory.verdict == "pass":
+            score += 0.15
+        candidates.append((score, trajectory.trajectory_id, trajectory))
+    if not candidates:
+        return []
+    top = heapq.nlargest(
+        max(limit, 0),
+        candidates,
+        key=lambda item: (item[0], -ord(item[1][0]) if item[1] else 0),
+    )
+    # Empate: ordena por trajectory_id ascendente (estable para tests).
+    top.sort(key=lambda item: (-item[0], item[1]))
+    return [trajectory for _score, _tid, trajectory in top]

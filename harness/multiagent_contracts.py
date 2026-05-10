@@ -64,12 +64,12 @@ def validate_contract_artifact(role: str, artifact: str) -> list[str]:
     contract = contract_for_role(role)
     if contract is None:
         return [f"rol desconocido: {role}"]
-    missing = [
-        section
+    artifact_lower = artifact.lower()
+    return [
+        f"falta sección requerida: {section}"
         for section in contract.required_sections
-        if section.lower() not in artifact.lower()
+        if section.lower() not in artifact_lower
     ]
-    return [f"falta sección requerida: {section}" for section in missing]
 
 
 def assert_contract_handoff(role: str, artifact: str) -> None:

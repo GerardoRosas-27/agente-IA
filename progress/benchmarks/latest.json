@@ -1,0 +1,17 @@
+[
+  {
+    "name": "repo_index_symbols",
+    "passed": true,
+    "detail": "harness/benchmarks.py, progress/impl_whatsapp_message_listener.md, api_endpoints/whatsapp_hook.py, docs/architecture.md, harness/tool_learning.py"
+  },
+  {
+    "name": "tool_read_guard",
+    "passed": true,
+    "detail": "ruta fuera del repositorio"
+  },
+  {
+    "name": "objective_evaluator",
+    "passed": true,
+    "detail": "$ git reset --hard\nBLOQUEADO: comando bloqueado por política de seguridad"
+  }
+]

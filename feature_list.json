@@ -190,6 +190,73 @@
       ],
       "status": "pending",
       "origin": "user"
+    },
+    {
+      "id": 16,
+      "name": "aci_line_targeted_editor",
+      "title": "Editor de archivos por rangos (Agent-Computer Interface)",
+      "description": "Inspirado en SWE-agent (arXiv:2405.15793): un editor con ventana de archivo y operaciones por rango (view/edit_lines/insert_at) en lugar de aceptar archivos enteros. La hipótesis del paper es que la interfaz adecuada para un LLM duplica scores en SWE-Bench frente a bash crudo. Debe integrarse como nuevas acciones del agent_loop y, eventualmente, restringir _apply_code_blocks a archivos cortos.",
+      "acceptance": [
+        "Existen acciones JSON view_file, edit_lines e insert_at en harness/agent_loop.py.",
+        "Tras edit_lines / insert_at se ejecuta py_compile sobre el archivo en el mismo turno y la observación incluye el resultado.",
+        "Tests en tests/test_agent_loop.py validan ediciones por rango sin tocar el archivo entero."
+      ],
+      "status": "pending",
+      "origin": "user"
+    },
+    {
+      "id": 17,
+      "name": "adaptive_best_of_n",
+      "title": "Best-of-N adaptativo (AB-MCTS)",
+      "description": "Inspirado en AB-MCTS (arXiv:2503.04412): tras evaluar K candidatos, decidir explícitamente si la siguiente expansión va wider (más candidatos diversos) o deeper (refinar el mejor con reflexión sobre lo que falla). Hoy harness/best_of_n.py es plano. Debe extenderse con una estrategia adaptativa que use BRTs y EPR como señal de feedback.",
+      "acceptance": [
+        "Nueva función harness/best_of_n.adaptive_search devuelve un resultado con campo expansion_strategy ∈ {wider, deeper, stop}.",
+        "Si todos los candidatos iniciales tienen EPR=0 escoge wider; si hay un candidato con EPR parcial escoge deeper.",
+        "Tests reproducen ambos casos en tests/test_best_of_n.py."
+      ],
+      "status": "pending",
+      "origin": "user"
+    },
+    {
+      "id": 18,
+      "name": "mini_swe_bench_local",
+      "title": "Benchmark suite local estilo SWE-bench Lite",
+      "description": "Ampliar harness/benchmark_tasks.py con 20+ tareas (issue + repo seed + tests fail-to-pass) ejecutables 100% offline. Sirve como superficie de medición para la auto-mejora (id 19) y para detectar regresiones por ciclo. Inspirado en SWE-bench Pro (arXiv:2509.16941) y SWE-bench Live (arXiv:2505.23419).",
+      "acceptance": [
+        "Existen ≥20 tareas JSON en data/benchmark_tasks/ con issue, archivos seed y tests fail-to-pass.",
+        "python -m harness.cli code-benchmark imprime una matriz por tarea (passed/failed/elapsed).",
+        "Cada corrida persiste un snapshot en progress/benchmarks/swe_lite_<timestamp>.json comparable entre versiones."
+      ],
+      "status": "pending",
+      "origin": "user"
+    },
+    {
+      "id": 19,
+      "name": "self_improvement_loop_validated",
+      "title": "Bucle de auto-mejora validado (SICA / Darwin-Gödel)",
+      "description": "Inspirado en SICA (arXiv:2504.15228) y Darwin-Gödel Machine (arXiv:2505.22954): la cola de self_improvements deja de ser pasiva. El harness toma una propuesta, crea una rama git, deja que un sub-agente la implemente, corre los tests y los benchmarks de la feature 18, y solo hace merge si: (1) tests pre-existentes siguen pasando, (2) al menos un benchmark mejora estricto, (3) ningún benchmark empeora. Mantiene un archivo de versiones aceptadas con rollback automático.",
+      "acceptance": [
+        "Nuevo módulo harness/self_evolution.py con la función try_apply_improvement(proposal_id) que aísla cambios en una rama y compara métricas pre/post.",
+        "Si los criterios fallan, se descarta la rama y se persiste evidencia en progress/self_evolution/<id>.md.",
+        "La feature 18 debe estar 'done' antes de que esta pueda iniciarse (dependencia explícita).",
+        "Tests en tests/test_self_evolution.py validan el rechazo cuando un benchmark empeora."
+      ],
+      "status": "pending",
+      "origin": "user",
+      "depends_on": [18]
+    },
+    {
+      "id": 20,
+      "name": "mcts_judge_for_review",
+      "title": "Reviewer estilo MCTS-Judge con criterios atómicos",
+      "description": "Inspirado en MCTS-Judge (arXiv:2502.12468): el revisor LLM final descompone su veredicto en criterios atómicos (tests pasan, no toca .env, sin imports rotos, diff mínimo, BRTs ok…) y puntúa cada uno por separado en sub-prompts cortos, en vez de un PASS/FAIL holístico. Eleva la fiabilidad de la decisión final y el harness puede reportar score por criterio.",
+      "acceptance": [
+        "review_<slug>.md incluye una tabla con score por criterio además de la línea VERDICT.",
+        "El score global es PASS solo si todos los criterios hard (tests, .env, imports) pasan y el promedio ≥ 0.65.",
+        "Tests en tests/test_mcts_review.py reproducen el caso 'todos los criterios pasan ⇒ PASS' y 'falla un hard ⇒ FAIL'."
+      ],
+      "status": "pending",
+      "origin": "user"
     }
   ]
 }

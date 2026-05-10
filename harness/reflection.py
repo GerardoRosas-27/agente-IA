@@ -5,7 +5,7 @@ from pathlib import Path
 
 from harness.paths import STATE_DB_PATH
 from harness.shared_memory import remember
-from harness.trajectories import AgentTrajectory
+from harness.trajectories import AgentTrajectory, TrajectoryStep
 
 
 def classify_failure(failure_report: str) -> str:
@@ -55,17 +55,20 @@ def reflect_on_trajectory(
     *,
     db_path: Path = STATE_DB_PATH,
 ) -> str:
-    failures = [step for step in trajectory.steps if not step.success]
-    if not failures:
+    last: TrajectoryStep | None = None
+    for step in trajectory.steps:
+        if not step.success:
+            last = step
+    if last is None:
         return "No hay fallos que reflexionar."
-    last = failures[-1]
     reflection = build_failure_reflection(trajectory.goal, last.observation, last_action=last.action)
     trajectory.reflection = reflection
+    category = classify_failure(last.observation)
     remember(
         "failure_reflection",
         f"{trajectory.trajectory_id}:{last.action}",
         reflection,
-        tags=["reflection", "failure", classify_failure(last.observation), last.action],
+        tags=["reflection", "failure", category, last.action],
         confidence=0.9,
         db_path=db_path,
     )

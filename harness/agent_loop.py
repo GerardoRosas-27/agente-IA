@@ -11,7 +11,13 @@ from typing import Any, Callable
 
 from harness.paths import PROGRESS_DIR
 from harness.orchestrator import _apply_code_blocks, _check_command_policy, _repo_root, _resolve_repo_path, _run_tests
-from harness.repo_index import repo_context_for_goal
+from harness.repo_index import (
+    repo_context_for_goal,
+    search_callers,
+    search_class,
+    search_method,
+    search_method_in_class,
+)
 
 
 @dataclass(frozen=True)
@@ -212,6 +218,38 @@ def execute_tool_action(action: dict[str, Any], *, root: Path | None = None) -> 
         query = str(action.get("query") or "")
         return ToolObservation(kind, True, repo_context_for_goal(query, root=root, limit=int(action.get("limit") or 8)))
 
+    if kind == "search_class":
+        name = str(action.get("name") or "")
+        matches = search_class(name, root=root, limit=int(action.get("limit") or 20))
+        if not matches:
+            return ToolObservation(kind, False, f"Clase no encontrada: {name}")
+        body = "\n".join(f"- {m.path}:{m.start_line}-{m.end_line} class `{m.symbol}`" for m in matches)
+        return ToolObservation(kind, True, body)
+
+    if kind == "search_method":
+        name = str(action.get("name") or "")
+        klass = str(action.get("class") or action.get("class_name") or "").strip()
+        if klass:
+            matches = search_method_in_class(name, klass, root=root, limit=int(action.get("limit") or 20))
+        else:
+            matches = search_method(name, root=root, limit=int(action.get("limit") or 50))
+        if not matches:
+            return ToolObservation(kind, False, f"Método no encontrado: {name}{' en ' + klass if klass else ''}")
+        body = "\n".join(
+            f"- {m.path}:{m.start_line}-{m.end_line} {m.kind} `{m.symbol}`"
+            + (f" (en clase {m.parent})" if m.parent else "")
+            for m in matches
+        )
+        return ToolObservation(kind, True, body)
+
+    if kind == "search_callers":
+        symbol = str(action.get("symbol") or "")
+        callers = search_callers(symbol, root=root, limit=int(action.get("limit") or 50))
+        if not callers:
+            return ToolObservation(kind, False, f"Sin llamadores conocidos para `{symbol}`.")
+        body = "\n".join(f"- {entry.path}" for entry in callers)
+        return ToolObservation(kind, True, body)
+
     if kind == "patch":
         body = str(action.get("patch") or "")
         if not body.strip():
@@ -263,6 +301,9 @@ def execute_tool_action(action: dict[str, Any], *, root: Path | None = None) -> 
 AGENT_LOOP_SYSTEM = """Eres un agente de código con herramientas. Responde SOLO JSON.
 Acciones disponibles:
 {"action":"search","query":"...","limit":5}
+{"action":"search_class","name":"HttpClient"}
+{"action":"search_method","name":"fetch","class":"HttpClient"}
+{"action":"search_callers","symbol":"HttpClient"}
 {"action":"read","path":"ruta"}
 {"action":"patch","patch":"diff unificado"}  // preview, no aplica
 {"action":"patch","patch":"diff unificado","apply":true}  // aplica con checkpoint
@@ -270,6 +311,7 @@ Acciones disponibles:
 {"action":"command","command":"python -m pytest ...","timeout":60}
 {"action":"rollback","checkpoint":"progress/agent_sessions/checkpoints/archivo.patch"}
 {"action":"done","summary":"..."}
+Estrategia recomendada: usa search_class/search_method para localización precisa antes de read.
 No uses comandos destructivos. Primero previsualiza patches; aplica solo cuando estés seguro."""
 
 

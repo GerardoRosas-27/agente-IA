@@ -124,6 +124,34 @@ Mejoras adicionales inspiradas en papers:
 - Recuperación de trayectorias similares antes de actuar.
 - Validación automática de handoffs SOP entre roles.
 
+## Mejoras inspiradas en papers recientes (2024-2026)
+
+El harness incorpora prácticas de la literatura SOTA en agentes de código:
+
+- **Pipeline determinista localizar→reparar→validar** (Agentless, arXiv:2407.01489)
+- **Localización jerárquica archivo→símbolo→líneas** (Agentless, AutoCodeRover)
+- **APIs de búsqueda estructural por AST** `search_class/method/callers` (AutoCodeRover, arXiv:2404.05427)
+- **Bug Reproduction Tests** generados desde la feature antes del patch (Otter arXiv:2502.05368, BRT Agent arXiv:2502.01821)
+- **Selector EPR** (Ensemble Pass Rate) en best-of-N (BRT Agent: 70% top-1 acierto sobre 20 candidatos)
+- **Verifier determinista separado del reviewer** (MAR arXiv:2512.20845, Generator/Critic/Verifier)
+- **Replan al fallo** en lugar de reintentar el mismo plan (AdaCoder arXiv:2504.04220, CodePlan)
+- **Memoria TF-IDF resistente a distractores** (Episodic Memory paper, arXiv:2502.06975)
+- **Reflexión categorizada** post-fallo (Reflexion / SICA arXiv:2504.15228)
+- **Trayectorias persistidas + recuperación por similitud** (SICA, Darwin-Gödel arXiv:2505.22954)
+
+Activación opt-in en el ciclo del orquestador:
+
+```python
+from harness.orchestrator import run_one_feature_cycle
+
+run_one_feature_cycle(
+    model="...",
+    enable_brt=True,        # genera tests reproductores antes del patch
+    enable_verifier=True,   # filtra el veredicto del reviewer LLM con evidencia ejecutable
+    enable_replan=True,     # pide al Líder un plan nuevo al fallar (no reintenta el mismo)
+)
+```
+
 ## Prueba opcional contra LM Studio real
 
 Con el servidor en marcha:

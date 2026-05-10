@@ -20,7 +20,46 @@
 | `harness/skill_promotion.py` | Promoción de soluciones exitosas a skills reutilizables |
 | `harness/benchmark_tasks.py` | Benchmarks propios estilo SWE-bench en JSON |
 | `harness/multiagent_contracts.py` | SOPs y validación de artefactos por rol |
+| `harness/test_generator.py` | Generador de Bug Reproduction Tests desde una feature (Otter / BRT Agent) |
+| `harness/verifier.py` | Verificador determinista basado en evidencia ejecutable (pytest output, py_compile, BRTs); hard-fails sobre secretos / imports / tests |
 | **`api_endpoints/whatsapp_hook.py`** | **Maneja la recepción, verificación y parsing de payloads Webhook externos (ej. WhatsApp).** |
+
+## Flags opt-in del orquestador
+
+`run_one_feature_cycle` acepta tres banderas para activar prácticas inspiradas
+en literatura reciente sin romper compatibilidad con flujos existentes:
+
+| Flag | Descripción | Paper de referencia |
+|------|-------------|---------------------|
+| `enable_brt` | Antes del implementador, pide al LLM 1-3 tests pytest fail-to-pass desde la feature; los BRTs se ejecutan al final como evidencia | Otter (arXiv:2502.05368), BRT Agent (arXiv:2502.01821) |
+| `enable_verifier` | Tras el reviewer LLM, ejecuta `harness.verifier.verify_cycle` sobre evidencia ejecutable; sobreescribe a FAIL si encuentra contradicciones | MAR (arXiv:2512.20845), Generator/Critic/Verifier |
+| `enable_replan` | Si el reviewer da FAIL, antes de reintentar pide al Líder un **plan nuevo** basado en el feedback (no reusa el plan original) | AdaCoder (arXiv:2504.04220), CodePlan (Microsoft) |
+
+Best-of-N también acepta `brt_paths`: cuando se proveen, el ranking de
+candidatos se hace por **Ensemble Pass Rate** (EPR) sobre los BRTs, no solo
+por tests preexistentes.
+
+## Búsqueda estructural por símbolos (AutoCodeRover-style)
+
+`harness.repo_index` expone APIs para localización precisa que se usan tanto
+en el `coding_pipeline` como en el `agent_loop` (acciones JSON
+`search_class`, `search_method`, `search_callers`):
+
+```python
+from harness.repo_index import search_class, search_method, search_method_in_class, search_callers
+
+search_class("HttpClient")                    # → SymbolMatch con path/líneas
+search_method("fetch", root=...)              # → todas las funciones/métodos `fetch`
+search_method_in_class("fetch", "HttpClient") # → solo métodos en esa clase
+search_callers("HttpClient")                  # → archivos que importan/referencian
+```
+
+## Memoria con TF-IDF (resistente a distractores)
+
+`harness.shared_memory.semantic_recall_v2` recupera memorias por similitud
+TF-IDF + cosine en Python puro, sin embeddings externos. En benchmarks con
+muchos distractores recupera consistentemente el item relevante en el top-3
+(la versión LIKE/regex previa lo perdía). Compatible con LM Studio offline.
 
 ## Backends LLM
 

@@ -2,7 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from harness.repo_index import build_repo_graph, build_repo_index, localize_symbols, related_tests_for_files, repo_context_for_goal, search_repo_index
+from harness.repo_index import (
+    build_repo_graph,
+    build_repo_index,
+    localize_symbols,
+    related_tests_for_files,
+    repo_context_for_goal,
+    search_callers,
+    search_class,
+    search_method,
+    search_method_in_class,
+    search_repo_index,
+)
 
 
 def test_repo_index_extracts_python_symbols(tmp_path: Path) -> None:
@@ -62,6 +73,47 @@ def test_repo_graph_and_related_tests_use_symbols_and_imports(tmp_path: Path) ->
 
     assert "add" in graph.symbol_to_files
     assert related == ["tests/test_calc.py"]
+
+
+def test_structural_search_apis(tmp_path: Path) -> None:
+    src = tmp_path / "pkg"
+    src.mkdir()
+    (src / "client.py").write_text(
+        "class HttpClient:\n"
+        "    def fetch(self):\n"
+        "        return 1\n"
+        "\n"
+        "class StubClient:\n"
+        "    def fetch(self):\n"
+        "        return 2\n"
+        "\n"
+        "def standalone():\n"
+        "    return 3\n",
+        encoding="utf-8",
+    )
+    (src / "consumer.py").write_text(
+        "from pkg.client import HttpClient\n"
+        "\n"
+        "def use():\n"
+        "    return HttpClient().fetch()\n",
+        encoding="utf-8",
+    )
+
+    classes = search_class("HttpClient", root=tmp_path)
+    methods = search_method("fetch", root=tmp_path)
+    in_class = search_method_in_class("fetch", "StubClient", root=tmp_path)
+    callers = search_callers("HttpClient", root=tmp_path)
+
+    assert len(classes) == 1
+    assert classes[0].path == "pkg/client.py"
+    assert {m.symbol for m in methods} == {"fetch"}
+    assert {(m.path, m.parent) for m in methods} == {
+        ("pkg/client.py", "HttpClient"),
+        ("pkg/client.py", "StubClient"),
+    }
+    assert len(in_class) == 1
+    assert in_class[0].parent == "StubClient"
+    assert any(c.path == "pkg/consumer.py" for c in callers)
 
 
 def test_localize_symbols_returns_line_ranges(tmp_path: Path) -> None:

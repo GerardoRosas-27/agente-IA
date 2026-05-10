@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from harness.auto_training import record_user_session_training
+from harness.test_generator import (
+    GeneratedTestSuite,
+    generate_repro_tests,
+    run_pytest_on_file,
+)
+from harness.verifier import VerifierVerdict, verify_cycle
 from harness.feature_store import (
     USER_TASK_ORIGIN,
     is_user_task,
@@ -429,30 +435,55 @@ def _module_name_from_path(rel_path: str) -> str | None:
 
 
 def _validate_saved_files(saved_files: list[str]) -> str:
-    """Compila e importa archivos Python creados para detectar errores temprano."""
+    """Compila e importa archivos Python creados para detectar errores temprano.
+
+    Se hace primero un `py_compile` agrupado (mucho más rápido que un subproceso
+    por archivo). Si la compilación agrupada falla, se cae a uno-por-archivo para
+    aislar qué archivo está roto sin sacrificar el modo común (todos compilan).
+    """
     root = Path(__file__).resolve().parent.parent
     reports: list[str] = []
     python_files = [path for path in saved_files if path.endswith(".py")]
     if not python_files:
         return "No hubo archivos Python nuevos/modificados para validar."
 
-    for rel_path in python_files:
-        full_path = root / rel_path
-        reports.append(f"## Validando {rel_path}")
-        compile_cmd = [sys.executable, "-m", "py_compile", str(full_path)]
-        try:
-            r = subprocess.run(
-                compile_cmd,
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                timeout=20,
-            )
-            reports.append(f"py_compile exit={r.returncode}\n{r.stdout}{r.stderr}".strip())
-        except Exception as exc:
-            reports.append(f"py_compile error: {exc}")
-            continue
+    full_paths = [str(root / rel) for rel in python_files]
+    grouped_cmd = [sys.executable, "-m", "py_compile", *full_paths]
+    grouped_ok = False
+    try:
+        r = subprocess.run(
+            grouped_cmd,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=max(20, 5 * len(python_files)),
+        )
+        grouped_ok = r.returncode == 0
+        files_label = ", ".join(python_files)
+        reports.append(
+            f"## py_compile (agrupado: {files_label})\n"
+            f"exit={r.returncode}\n{r.stdout}{r.stderr}".strip()
+        )
+    except Exception as exc:
+        reports.append(f"py_compile agrupado error: {exc}")
 
+    if not grouped_ok:
+        for rel_path in python_files:
+            full_path = root / rel_path
+            reports.append(f"## Validando {rel_path}")
+            try:
+                r = subprocess.run(
+                    [sys.executable, "-m", "py_compile", str(full_path)],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                )
+                reports.append(f"py_compile exit={r.returncode}\n{r.stdout}{r.stderr}".strip())
+            except Exception as exc:
+                reports.append(f"py_compile error: {exc}")
+
+    for rel_path in python_files:
         module_name = _module_name_from_path(rel_path)
         if module_name is None:
             continue
@@ -523,9 +554,23 @@ def run_one_feature_cycle(
     num_predict_worker: int = 2800,
     max_retries: int = 2,
     on_log: Callable[[str], None] | None = None,
+    enable_brt: bool = False,
+    enable_verifier: bool = False,
+    enable_replan: bool = False,
 ) -> HarnessCycleResult | None:
     """
     Ejecuta un ciclo completo sobre la feature `in_progress`, o reclama la siguiente `pending`.
+
+    Flags opt-in (todos False por defecto para mantener compatibilidad):
+      - `enable_brt`: genera Bug Reproduction Tests desde la feature antes de
+        pedir el patch (Otter / BRT Agent). Los BRTs se ejecutan al final como
+        evidencia adicional.
+      - `enable_verifier`: usa `harness.verifier.verify_cycle` como filtro
+        determinista por encima del veredicto del Reviewer LLM. Si el verifier
+        encuentra evidencia contraria, sobreescribe a FAIL.
+      - `enable_replan`: si el revisor da FAIL, antes de reintentar pide al
+        Líder un plan nuevo basado en el feedback (en lugar de reusar el plan
+        original). Inspirado en AdaCoder / CodePlan.
     """
     log = on_log or (lambda _m: None)
 
@@ -562,11 +607,8 @@ def run_one_feature_cycle(
     conv_x = _read_head(DOCS_DIR / "conventions.md", 2500)
     ver_x = _read_head(DOCS_DIR / "verification.md", 2500)
 
-    log("Líder: planificando…")
-    leader_out = invoke_llm(
-        model,
-        prompts.LEADER_SYSTEM,
-        prompts.leader_user_message(
+    def _ask_leader(*, replan_feedback: str = "") -> str:
+        user_msg = prompts.leader_user_message(
             feature_block=fblock,
             agents_excerpt=agents_x,
             checkpoints_excerpt=cp_x,
@@ -574,17 +616,52 @@ def run_one_feature_cycle(
             memory_excerpt=memory_x,
             improvements_excerpt=improvements_x,
             internal_context=internal_x,
-        ),
-        llm_chat=llm_chat,
-        num_predict=num_predict_leader,
-        role_hint="leader",
-    )
+        )
+        if replan_feedback:
+            user_msg += (
+                "\n\n--- Feedback de intento anterior ---\n"
+                f"{replan_feedback}\n\n"
+                "Replanifica desde cero: cambia archivos candidatos o estrategia "
+                "si el plan anterior no llevó a un PASS."
+            )
+        return invoke_llm(
+            model,
+            prompts.LEADER_SYSTEM,
+            user_msg,
+            llm_chat=llm_chat,
+            num_predict=num_predict_leader,
+            role_hint="leader_replan" if replan_feedback else "leader",
+        )
+
+    log("Líder: planificando…")
+    leader_out = _ask_leader()
     _append_markdown(PROGRESS_DIR / "current.md", f"Líder · feature {fid}", leader_out)
+
+    brt_suite: GeneratedTestSuite | None = None
+    if enable_brt:
+        log("Generando Bug Reproduction Tests desde la feature…")
+        try:
+            brt_suite = generate_repro_tests(
+                feat,
+                invoke_llm=invoke_llm,
+                model=model,
+                repo_context=repo_context_x,
+                root=_repo_root(),
+                run_after_generation=True,
+            )
+            log(
+                f"BRTs en {brt_suite.test_path.name}; estado inicial: "
+                f"{brt_suite.initial_status}"
+            )
+        except Exception as exc:
+            log(f"BRT generation falló (continuamos sin BRT): {exc}")
+            brt_suite = None
 
     verdict = None
     previous_feedback = None
     impl_path = PROGRESS_DIR / f"impl_{slug}.md"
     review_path = PROGRESS_DIR / f"review_{slug}.md"
+    verify_path = PROGRESS_DIR / f"verify_{slug}.md"
     impl_body = ""
     review_body = ""
 
@@ -683,12 +760,57 @@ def run_one_feature_cycle(
                 "\n\nVEREDICTO SOBRESCRITO POR HARNESS: fallaron comandos bash "
                 "o se rechazaron bloques de cambio."
             )
+
+        if enable_verifier:
+            brt_runs = []
+            if brt_suite is not None and brt_suite.test_path.is_file():
+                log("Verifier: corriendo BRTs sobre HEAD post-implementación…")
+                try:
+                    brt_runs = [run_pytest_on_file(brt_suite.test_path, root=_repo_root())]
+                except Exception as exc:
+                    log(f"BRT post-run falló: {exc}")
+            try:
+                determ_verdict: VerifierVerdict = verify_cycle(
+                    test_output=test_output,
+                    validation_output=validation_output,
+                    changed_files=saved_files,
+                    rejected=apply_result.rejected,
+                    bash_ok=bash_ok,
+                    bug_reproduction_runs=brt_runs,
+                )
+            except Exception as exc:
+                log(f"Verifier determinista falló (continuamos con LLM-only): {exc}")
+                determ_verdict = None
+            if determ_verdict is not None:
+                verify_path.write_text(
+                    f"# Verifier · {feat.get('title')} (Intento {attempt + 1})\n\n"
+                    f"{determ_verdict.report_markdown}\n",
+                    encoding="utf-8",
+                )
+                if verdict is True and not determ_verdict.passed:
+                    verdict = False
+                    review_body += (
+                        "\n\nVEREDICTO SOBRESCRITO POR VERIFIER DETERMINISTA: "
+                        f"score={determ_verdict.score:.3f}. Ver `{verify_path.name}`."
+                    )
+
         if verdict is True:
             break
         else:
             previous_feedback = review_body
             if attempt < max_retries:
                 log("El revisor rechazó la implementación. Reintentando…")
+                if enable_replan:
+                    log("Replan: pidiendo al Líder un plan nuevo basado en el feedback…")
+                    try:
+                        leader_out = _ask_leader(replan_feedback=review_body[-3000:])
+                        _append_markdown(
+                            PROGRESS_DIR / "current.md",
+                            f"Líder (replan) · feature {fid}",
+                            leader_out,
+                        )
+                    except Exception as exc:
+                        log(f"Replan falló (sigo con plan original): {exc}")
 
     data = load_feature_list(FEATURE_LIST_PATH)
     if verdict is True:

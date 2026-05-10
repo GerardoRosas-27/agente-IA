@@ -1,0 +1,58 @@
+[
+  {
+    "path": "alpha.py",
+    "symbols": [
+      "webhook_handler"
+    ],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "alpha",
+      "def",
+      "handler",
+      "pass",
+      "webhook",
+      "webhook_handler"
+    ],
+    "summary": "def webhook_handler(): pass",
+    "mtime_ns": 1778409712325172500,
+    "size": 34,
+    "locations": [
+      {
+        "path": "alpha.py",
+        "symbol": "webhook_handler",
+        "kind": "function",
+        "start_line": 1,
+        "end_line": 2,
+        "score": 0.0
+      }
+    ]
+  },
+  {
+    "path": "beta.py",
+    "symbols": [
+      "calculator"
+    ],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "beta",
+      "calculator",
+      "def",
+      "pass"
+    ],
+    "summary": "def calculator(): pass",
+    "mtime_ns": 1778409712332244900,
+    "size": 29,
+    "locations": [
+      {
+        "path": "beta.py",
+        "symbol": "calculator",
+        "kind": "function",
+        "start_line": 1,
+        "end_line": 2,
+        "score": 0.0
+      }
+    ]
+  }
+]

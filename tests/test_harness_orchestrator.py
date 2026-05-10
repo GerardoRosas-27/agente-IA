@@ -148,6 +148,34 @@ class TestRunOneFeatureCycle(unittest.TestCase):
         self.assertTrue((prog / "impl_demo_feature.md").is_file())
         self.assertTrue((prog / "review_demo_feature.md").is_file())
 
+    def test_verifier_overrides_llm_pass_when_tests_fail(self) -> None:
+        prog = self.tmp / "progress"
+        with (
+            patch.object(orchestrator, "FEATURE_LIST_PATH", self.fl),
+            patch.object(orchestrator, "PROGRESS_DIR", prog),
+            patch.object(orchestrator, "AGENTS_MD", self.tmp / "AGENTS.md"),
+            patch.object(orchestrator, "CHECKPOINTS_MD", self.tmp / "CHECKPOINTS.md"),
+            patch.object(orchestrator, "DOCS_DIR", self.tmp / "docs"),
+            patch.object(orchestrator, "invoke_llm", self._fake_invoke),
+            patch.object(
+                orchestrator,
+                "_run_tests",
+                return_value="Exit code: 1\n3 passed, 5 failed in 0.5s",
+            ),
+            patch.object(orchestrator, "_build_repo_context", return_value="repo ctx"),
+        ):
+            res = orchestrator.run_one_feature_cycle(
+                model="m",
+                max_retries=0,
+                enable_verifier=True,
+            )
+
+        assert res is not None
+        # El LLM fake siempre devuelve VERDICT: PASS, pero el verifier ve
+        # 5 failed y exit=1 → debe sobreescribir a FAIL.
+        self.assertEqual(res.verdict, False)
+        self.assertTrue((prog / "verify_demo_feature.md").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

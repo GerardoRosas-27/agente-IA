@@ -1,0 +1,51 @@
+[
+  {
+    "path": "src/calc.py",
+    "symbols": [
+      "add"
+    ],
+    "imports": [],
+    "references": [
+      "a",
+      "b"
+    ],
+    "tokens": [
+      "add",
+      "calc",
+      "def",
+      "return",
+      "src"
+    ],
+    "summary": "def add(a, b): return a + b",
+    "mtime_ns": 1778409379426837200,
+    "size": 34
+  },
+  {
+    "path": "tests/test_calc.py",
+    "symbols": [
+      "test_add"
+    ],
+    "imports": [
+      "src"
+    ],
+    "references": [
+      "add"
+    ],
+    "tokens": [
+      "add",
+      "assert",
+      "calc",
+      "def",
+      "from",
+      "import",
+      "src",
+      "test",
+      "test_add",
+      "test_calc",
+      "tests"
+    ],
+    "summary": "from src.calc import add def test_add(): assert add(1, 2) == 3",
+    "mtime_ns": 1778409379431480000,
+    "size": 74
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "path": "webhook.py",
+    "symbols": [
+      "webhook_handler"
+    ],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "def",
+      "handler",
+      "pass",
+      "webhook",
+      "webhook_handler"
+    ],
+    "summary": "def webhook_handler(): pass",
+    "mtime_ns": 1778409364534852900,
+    "size": 34
+  }
+]

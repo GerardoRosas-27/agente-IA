@@ -1,0 +1,35 @@
+{
+  "trajectory_id": "benchmark_demo",
+  "goal": "crear demo",
+  "steps": [
+    {
+      "action": "retrieve_similar_trajectories",
+      "observation": "- benchmark_demo: pass \n- crear_demo: pass ",
+      "success": true,
+      "score": 0.5,
+      "created_at": 1778411624.4344456
+    },
+    {
+      "action": "localize",
+      "observation": "## Archivos candidatos\n- tasks/demo.json: symbols=-\n\n## Símbolos/líneas candidatos\nNo se encontraron símbolos candidatos.",
+      "success": true,
+      "score": 1.0,
+      "created_at": 1778411624.445764
+    },
+    {
+      "action": "patch_validate",
+      "observation": "Patch 1 aplicado: demo.py\n\n$ C:\\Python313\\python.exe -m py_compile demo.py\nExit code: 0",
+      "success": true,
+      "score": 1.0,
+      "created_at": 1778411625.3203828
+    }
+  ],
+  "patches": [
+    "diff --git a/demo.py b/demo.py\nnew file mode 100644\n--- /dev/null\n+++ b/demo.py\n@@ -0,0 +1 @@\n+VALUE = 1\n"
+  ],
+  "tests": [
+    "$ C:\\Python313\\python.exe -m py_compile demo.py\nExit code: 0"
+  ],
+  "verdict": "pass",
+  "reflection": ""
+}

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -234,7 +236,93 @@ def semantic_recall(
             continue
         score = (len(overlap) / len(query_tokens)) + (0.15 * item.confidence)
         scored.append((score, item))
-    scored.sort(key=lambda pair: (-pair[0], pair[1].updated_at), reverse=False)
+    # Orden estable: score descendente; en empate, el más reciente primero.
+    scored.sort(key=lambda pair: (-pair[0], -ord(pair[1].updated_at[:1] or "0"), pair[1].id))
+    return [item for _score, item in scored[: max(limit, 0)]]
+
+
+def _tf_counter(text: str) -> Counter[str]:
+    """Cuenta tokens (term frequency) usando el mismo tokenizador del harness."""
+    counter: Counter[str] = Counter()
+    for raw in TOKEN_RE.findall(text):
+        lowered = raw.lower()
+        if len(lowered) >= 3:
+            counter[lowered] += 1
+        for part in lowered.split("_"):
+            if len(part) >= 3:
+                counter[part] += 1
+    return counter
+
+
+def _cosine_tfidf(query_tf: Counter[str], doc_tf: Counter[str], idf: dict[str, float]) -> float:
+    """Cosine similarity entre query y documento con pesos TF-IDF."""
+    if not query_tf or not doc_tf:
+        return 0.0
+    common = set(query_tf) & set(doc_tf)
+    if not common:
+        return 0.0
+    dot = 0.0
+    for token in common:
+        weight = idf.get(token, 0.0)
+        dot += query_tf[token] * weight * doc_tf[token] * weight
+    q_norm = math.sqrt(sum((tf * idf.get(tok, 0.0)) ** 2 for tok, tf in query_tf.items()))
+    d_norm = math.sqrt(sum((tf * idf.get(tok, 0.0)) ** 2 for tok, tf in doc_tf.items()))
+    if q_norm <= 0 or d_norm <= 0:
+        return 0.0
+    return dot / (q_norm * d_norm)
+
+
+def semantic_recall_v2(
+    *,
+    query: str,
+    scope: str | None = None,
+    limit: int = 12,
+    candidate_pool: int = 200,
+    db_path: Path = STATE_DB_PATH,
+) -> list[MemoryItem]:
+    """Recall por TF-IDF + cosine, robusto frente a distractores.
+
+    Inspirado en el paper "Episodic Memory is the Missing Piece for Long-Term LLM
+    Agents" (arXiv:2502.06975): la sliding window/LIKE pierde recall ante muchos
+    distractores; un índice ponderado por IDF mejora dramáticamente la
+    precisión. Implementación 100% Python puro para mantener el harness sin
+    dependencias de embeddings externos (compatible con LM Studio offline).
+    """
+    query_tokens = _tokens(query)
+    if not query_tokens:
+        return recall(scope=scope, limit=limit, db_path=db_path)
+
+    candidates = recall(scope=scope, limit=max(candidate_pool, limit * 4), db_path=db_path)
+    if not candidates:
+        return []
+
+    docs: list[tuple[MemoryItem, Counter[str]]] = []
+    df: Counter[str] = Counter()
+    for item in candidates:
+        haystack = f"{item.scope} {item.key} {item.value} {' '.join(item.tags)}"
+        tf = _tf_counter(haystack)
+        if not tf:
+            continue
+        docs.append((item, tf))
+        for token in tf:
+            df[token] += 1
+
+    if not docs:
+        return []
+
+    n_docs = len(docs)
+    idf = {token: math.log((1 + n_docs) / (1 + count)) + 1 for token, count in df.items()}
+    query_tf = _tf_counter(query)
+
+    scored: list[tuple[float, MemoryItem]] = []
+    for item, tf in docs:
+        sim = _cosine_tfidf(query_tf, tf, idf)
+        if sim <= 0:
+            continue
+        sim += 0.05 * item.confidence
+        scored.append((sim, item))
+
+    scored.sort(key=lambda pair: (-pair[0], pair[1].id))
     return [item for _score, item in scored[: max(limit, 0)]]
 
 

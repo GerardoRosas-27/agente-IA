@@ -1,0 +1,48 @@
+[
+  {
+    "path": "demo.py",
+    "symbols": [],
+    "imports": [],
+    "references": [
+      "VALUE"
+    ],
+    "tokens": [
+      "demo",
+      "value"
+    ],
+    "summary": "VALUE = 1",
+    "mtime_ns": 1778409696681341400,
+    "size": 11,
+    "locations": []
+  },
+  {
+    "path": "tasks/demo.json",
+    "symbols": [],
+    "imports": [],
+    "references": [],
+    "tokens": [
+      "100644",
+      "commands",
+      "crear",
+      "demo",
+      "dev",
+      "diff",
+      "file",
+      "git",
+      "goal",
+      "json",
+      "mode",
+      "nnew",
+      "null",
+      "patch",
+      "task",
+      "task_id",
+      "tasks",
+      "value"
+    ],
+    "summary": "{ \"task_id\": \"demo\", \"goal\": \"crear demo\", \"patch\": \"diff --git a/demo.py b/demo.py\\nnew file mode 100644\\n--- /dev/null\\n+++ b/demo.py\\n@@ -0,0 +1 @@\\n+VALUE = 1\\n\", \"commands\": [] }",
+    "mtime_ns": 1778409695813884300,
+    "size": 196,
+    "locations": []
+  }
+]

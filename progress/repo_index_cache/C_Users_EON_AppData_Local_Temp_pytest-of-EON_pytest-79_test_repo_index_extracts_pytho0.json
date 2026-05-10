@@ -1,0 +1,52 @@
+[
+  {
+    "path": "skills/demo_tool.py",
+    "symbols": [
+      "DemoTool",
+      "run"
+    ],
+    "imports": [
+      "json"
+    ],
+    "references": [
+      "dumps",
+      "json"
+    ],
+    "tokens": [
+      "class",
+      "def",
+      "demo",
+      "demo_tool",
+      "demotool",
+      "dumps",
+      "import",
+      "json",
+      "return",
+      "run",
+      "self",
+      "skills",
+      "tool"
+    ],
+    "summary": "import json class DemoTool: def run(self): return json.dumps({})",
+    "mtime_ns": 1778409546183549000,
+    "size": 83,
+    "locations": [
+      {
+        "path": "skills/demo_tool.py",
+        "symbol": "DemoTool",
+        "kind": "class",
+        "start_line": 3,
+        "end_line": 5,
+        "score": 0.0
+      },
+      {
+        "path": "skills/demo_tool.py",
+        "symbol": "run",
+        "kind": "function",
+        "start_line": 4,
+        "end_line": 5,
+        "score": 0.0
+      }
+    ]
+  }
+]
