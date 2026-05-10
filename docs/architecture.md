@@ -16,8 +16,29 @@
 1. Reclamar la siguiente `pending` (o continuar `in_progress`).
 2. **Líder**: plan breve → `progress/current.md`.
 3. **Implementador**: informe detallado → `progress/impl_<name>.md`.
-4. **Revisor**: checklist + `VERDICT` → `progress/review_<name>.md`.
-5. Si `PASS` → `done`; si `FAIL` o ambiguo → `pending` para corrección.
+4. **Harness**: aplica cambios con guardrails, ejecuta validaciones y guarda evidencia.
+5. **Revisor**: checklist + `VERDICT` → `progress/review_<name>.md`.
+6. Si `PASS` → `done`; si `FAIL` o ambiguo → `pending` para corrección.
+
+## Guardrails de ejecución agentica
+
+El orquestador incluye siete mejoras para acercar el flujo a un agente de código
+más potente y seguro:
+
+1. **Contexto automático del repositorio:** antes de llamar al implementador,
+   selecciona archivos probables por nombre/contenido inicial de la feature.
+2. **Cambios incrementales:** acepta bloques `patch`/`diff` y los valida con
+   `git apply --check` antes de aplicarlos.
+3. **Rutas seguras:** los bloques de archivo completo se resuelven contra la raíz
+   del repo; se rechazan rutas absolutas, `..` y archivos `.env`.
+4. **Reporte de rechazos:** todo bloque rechazado queda en la evidencia de debug
+   y puede forzar `FAIL` aunque el revisor apruebe.
+5. **Política de comandos:** comandos destructivos como `git reset --hard`,
+   `git clean -f`, `rm -rf` o `curl | sh` se bloquean antes de ejecutarse.
+6. **Validación enfocada:** si se tocan tests o módulos con tests asociados,
+   el harness ejecuta esos tests antes de la suite completa.
+7. **Evidencia para revisión:** el revisor recibe archivos modificados, patches
+   aplicados, bloques rechazados, comandos bash, validación de imports y pytest.
 
 ## Flujo de Datos Externos: Recepción de Mensajes (WhatsApp Webhook)
 

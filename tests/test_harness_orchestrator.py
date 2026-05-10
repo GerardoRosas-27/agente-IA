@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,64 @@ class TestParseVerdict(unittest.TestCase):
 
     def test_ambiguous(self) -> None:
         self.assertIsNone(orchestrator.parse_verdict("No verdict here"))
+
+
+class TestHarnessSafetyHelpers(unittest.TestCase):
+    def test_apply_code_blocks_rejects_paths_outside_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            body = """```python:skills/demo.py
+VALUE = 1
+```
+
+```python:../outside.py
+VALUE = 2
+```"""
+            with patch.object(orchestrator, "_repo_root", return_value=root):
+                result = orchestrator._apply_code_blocks(body)
+
+            self.assertEqual(result.saved_files, ["skills/demo.py"])
+            self.assertTrue((root / "skills" / "demo.py").is_file())
+            self.assertIn("fuera del repositorio", result.rejected[0])
+
+    def test_apply_code_blocks_supports_unified_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init"], cwd=str(root), capture_output=True, text=True, check=True)
+            body = """```patch
+diff --git a/demo.txt b/demo.txt
+new file mode 100644
+--- /dev/null
++++ b/demo.txt
+@@ -0,0 +1 @@
++hello
+```"""
+            with patch.object(orchestrator, "_repo_root", return_value=root):
+                result = orchestrator._apply_code_blocks(body)
+
+            self.assertEqual(result.patch_files, ["demo.txt"])
+            self.assertEqual((root / "demo.txt").read_text(encoding="utf-8"), "hello\n")
+
+    def test_run_bash_blocks_blocks_dangerous_commands(self) -> None:
+        logs: list[str] = []
+        ok, report = orchestrator._run_bash_blocks(
+            "```bash\ngit reset --hard\n```",
+            logs.append,
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("BLOQUEADO", report)
+        self.assertTrue(any("BLOQUEADO" in item for item in logs))
+
+    def test_related_test_paths_prefers_changed_tests_and_module_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tests").mkdir()
+            (root / "tests" / "test_demo.py").write_text("def test_x(): pass\n", encoding="utf-8")
+            with patch.object(orchestrator, "_repo_root", return_value=root):
+                related = orchestrator._related_test_paths(["skills/demo.py", "tests/test_demo.py"])
+
+            self.assertEqual(related, ["tests/test_demo.py"])
 
 
 class TestRunOneFeatureCycle(unittest.TestCase):
@@ -77,6 +136,7 @@ class TestRunOneFeatureCycle(unittest.TestCase):
             patch.object(orchestrator, "DOCS_DIR", self.tmp / "docs"),
             patch.object(orchestrator, "invoke_llm", self._fake_invoke),
             patch.object(orchestrator, "_run_tests", return_value="tests ok"),
+            patch.object(orchestrator, "_build_repo_context", return_value="repo ctx"),
         ):
             res = orchestrator.run_one_feature_cycle(model="m")
 

@@ -118,6 +118,7 @@ def implementer_user_message(
     conventions_excerpt: str,
     memory_excerpt: str = "",
     internal_context: str = "",
+    repo_context: str = "",
     previous_feedback: str | None = None,
 ) -> str:
     feedback_section = ""
@@ -143,8 +144,12 @@ def implementer_user_message(
 
 --- Contexto interno de ejecución y reutilización de skills ---
 {internal_context or "Sin contexto interno adicional."}
+
+--- Contexto automático del repositorio ---
+{repo_context or "Sin contexto automático adicional."}
 {feedback_section}
-Redacta el informe de implementación para esta única feature. Si una skill existente resuelve la tarea, implementa solo el conector/adaptador necesario y evita crear una skill duplicada."""
+Redacta el informe de implementación para esta única feature. Si una skill existente resuelve la tarea, implementa solo el conector/adaptador necesario y evita crear una skill duplicada.
+Preferencia de cambios: usa bloques ```patch para cambios incrementales; usa bloques ```python:ruta/archivo.py solo cuando crear o reemplazar el archivo completo sea claramente más simple."""
 
 
 def reviewer_user_message(
@@ -154,6 +159,7 @@ def reviewer_user_message(
     verification_excerpt: str,
     checkpoints_excerpt: str,
     test_output: str,
+    change_evidence: str = "",
 ) -> str:
     return f"""--- docs/verification.md ---
 {verification_excerpt}
@@ -169,6 +175,9 @@ def reviewer_user_message(
 
 --- Salida de los tests automatizados ---
 {test_output}
+
+--- Evidencia de cambios aplicada por el harness ---
+{change_evidence or "Sin evidencia adicional."}
 
 Evalúa. Primera línea: VERDICT: PASS o VERDICT: FAIL."""
 

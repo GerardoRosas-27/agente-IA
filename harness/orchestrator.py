@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -106,6 +107,38 @@ class HarnessCycleResult:
     message: str
 
 
+@dataclass(frozen=True)
+class ApplyResult:
+    saved_files: list[str]
+    patch_files: list[str]
+    rejected: list[str]
+    report: str
+
+    @property
+    def changed_files(self) -> list[str]:
+        ordered = dict.fromkeys([*self.saved_files, *self.patch_files])
+        return list(ordered)
+
+
+@dataclass(frozen=True)
+class CommandPolicyResult:
+    allowed: bool
+    reason: str = ""
+
+
+BLOCKED_COMMAND_PATTERNS = (
+    re.compile(r"\brm\s+-rf\b", re.IGNORECASE),
+    re.compile(r"\bdel\s+/.+\s", re.IGNORECASE),
+    re.compile(r"\brmdir\s+/(?:s|q)\b", re.IGNORECASE),
+    re.compile(r"\bRemove-Item\b.*\b-Recurse\b", re.IGNORECASE),
+    re.compile(r"\bgit\s+reset\s+--hard\b", re.IGNORECASE),
+    re.compile(r"\bgit\s+clean\s+-[A-Za-z]*f", re.IGNORECASE),
+    re.compile(r"\bgit\s+checkout\s+--\b", re.IGNORECASE),
+    re.compile(r"\bshutdown\b|\breboot\b", re.IGNORECASE),
+    re.compile(r"\bcurl\b.*\|\s*(?:sh|bash|powershell)", re.IGNORECASE),
+)
+
+
 def _get_in_progress(features: list[dict[str, Any]]) -> dict[str, Any] | None:
     for f in features:
         if (
@@ -117,12 +150,150 @@ def _get_in_progress(features: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
-def _apply_code_blocks(text: str) -> list[str]:
-    import re
-    # Busca bloques tipo ```python:ruta/archivo.py o ```ruta/archivo.py
-    # También busca bloques que solo tengan el nombre del archivo en la primera línea del bloque o justo antes
-    saved_files = []
-    root = Path(__file__).resolve().parent.parent
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _resolve_repo_path(rel_path: str, root: Path) -> tuple[Path | None, str]:
+    normalized = rel_path.replace("\\", "/").strip()
+    if not normalized:
+        return None, "ruta vacía"
+    candidate = Path(normalized)
+    if candidate.is_absolute() or normalized.startswith("../") or "/../" in normalized:
+        return None, "ruta fuera del repositorio"
+    if normalized in {".env", ".env.local"} or normalized.startswith(".env."):
+        return None, "archivo de secretos protegido"
+    full_path = (root / candidate).resolve()
+    root_resolved = root.resolve()
+    if full_path != root_resolved and root_resolved not in full_path.parents:
+        return None, "ruta fuera del repositorio"
+    return full_path, ""
+
+
+def _extract_patch_files(patch_text: str, root: Path) -> tuple[list[str], list[str]]:
+    files: list[str] = []
+    rejected: list[str] = []
+    for line in patch_text.splitlines():
+        if not (line.startswith("+++ ") or line.startswith("--- ")):
+            continue
+        path_token = line[4:].strip().split("\t", 1)[0]
+        if path_token == "/dev/null":
+            continue
+        if path_token.startswith(("a/", "b/")):
+            path_token = path_token[2:]
+        full_path, reason = _resolve_repo_path(path_token, root)
+        if full_path is None:
+            rejected.append(f"{path_token}: {reason}")
+            continue
+        files.append(full_path.relative_to(root).as_posix())
+    return list(dict.fromkeys(files)), rejected
+
+
+def _apply_patch_blocks(text: str, root: Path) -> tuple[list[str], list[str]]:
+    patch_files: list[str] = []
+    reports: list[str] = []
+    pattern = r"```(?:patch|diff)\n(.*?)```"
+    for index, match in enumerate(re.finditer(pattern, text, re.DOTALL | re.IGNORECASE), start=1):
+        patch_text = match.group(1).strip("\r\n") + "\n"
+        if not patch_text:
+            continue
+        candidate_files, rejected = _extract_patch_files(patch_text, root)
+        if rejected:
+            reports.append(f"Patch {index} rechazado por rutas inválidas: {'; '.join(rejected)}")
+            continue
+        check = subprocess.run(
+            ["git", "apply", "--check", "--whitespace=nowarn"],
+            cwd=str(root),
+            input=patch_text,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if check.returncode != 0:
+            reports.append(f"Patch {index} no aplica:\n{check.stdout}{check.stderr}".strip())
+            continue
+        applied = subprocess.run(
+            ["git", "apply", "--whitespace=nowarn"],
+            cwd=str(root),
+            input=patch_text,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if applied.returncode != 0:
+            reports.append(f"Patch {index} falló al aplicar:\n{applied.stdout}{applied.stderr}".strip())
+            continue
+        patch_files.extend(candidate_files)
+        reports.append(f"Patch {index} aplicado: {', '.join(candidate_files) or '(sin archivos detectados)'}")
+    return list(dict.fromkeys(patch_files)), reports
+
+
+def _build_repo_context(feature: dict[str, Any], *, max_files: int = 12, max_chars: int = 6000) -> str:
+    """Selecciona archivos probablemente relevantes sin indexar todo el repo."""
+    root = _repo_root()
+    query = " ".join(
+        str(feature.get(key) or "")
+        for key in ("name", "title", "description")
+    ).lower()
+    tokens = {
+        token
+        for token in re.findall(r"[a-z0-9_áéíóúñ]+", query, flags=re.IGNORECASE)
+        if len(token) >= 4
+    }
+    if not tokens:
+        return "No se detectaron tokens suficientes para seleccionar contexto."
+
+    candidates: list[tuple[int, Path]] = []
+    ignored_parts = {".git", "__pycache__", ".pytest_cache"}
+    for path in root.rglob("*"):
+        if not path.is_file() or any(part in ignored_parts for part in path.parts):
+            continue
+        if path.suffix.lower() not in {".py", ".md", ".json", ".txt"}:
+            continue
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        if rel.startswith(("logs/", "progress/history", "progress/current")):
+            continue
+        haystack = rel.lower()
+        score = sum(3 for token in tokens if token in haystack)
+        if score == 0:
+            try:
+                head = path.read_text(encoding="utf-8", errors="ignore")[:1200].lower()
+            except OSError:
+                head = ""
+            score = sum(1 for token in tokens if token in head)
+        if score > 0:
+            candidates.append((score, path))
+
+    if not candidates:
+        return "No se encontraron archivos claramente relacionados por nombre o contenido inicial."
+
+    chunks: list[str] = []
+    used_chars = 0
+    for score, path in sorted(candidates, key=lambda item: (-item[0], item[1].as_posix()))[:max_files]:
+        rel = path.relative_to(root).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        snippet = text[:900].strip()
+        block = f"### {rel} (score={score})\n```text\n{snippet}\n```\n"
+        if used_chars + len(block) > max_chars:
+            break
+        chunks.append(block)
+        used_chars += len(block)
+    return "\n".join(chunks) if chunks else "No se pudo leer contexto relevante."
+
+
+def _apply_code_blocks(text: str) -> ApplyResult:
+    # Busca bloques tipo ```python:ruta/archivo.py o ```ruta/archivo.py.
+    # También acepta bloques unified diff como ```patch para cambios incrementales.
+    saved_files: list[str] = []
+    rejected: list[str] = []
+    root = _repo_root()
+    patch_files, patch_reports = _apply_patch_blocks(text, root)
     
     # Intento 1: Formato estricto ```python:ruta/archivo.py
     pattern1 = r"```[a-zA-Z0-9]*:([^\s]+)\n(.*?)```"
@@ -146,26 +317,54 @@ def _apply_code_blocks(text: str) -> list[str]:
             
     for rel_path, code in all_matches:
         try:
-            full_path = (root / rel_path).resolve()
-            # Asegurar que está dentro del repo
-            if root in full_path.parents:
-                full_path.parent.mkdir(parents=True, exist_ok=True)
-                full_path.write_text(code, encoding="utf-8")
-                saved_files.append(rel_path)
-        except Exception:
-            pass
-            
-    return saved_files
+            full_path, reason = _resolve_repo_path(rel_path, root)
+            if full_path is None:
+                rejected.append(f"{rel_path}: {reason}")
+                continue
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            full_path.write_text(code, encoding="utf-8")
+            saved_files.append(full_path.relative_to(root).as_posix())
+        except Exception as exc:
+            rejected.append(f"{rel_path}: {exc}")
+
+    report_lines = []
+    if saved_files:
+        report_lines.append(f"Archivos escritos: {', '.join(saved_files)}")
+    if patch_reports:
+        report_lines.extend(patch_reports)
+    if rejected:
+        report_lines.append("Bloques rechazados: " + "; ".join(rejected))
+    if not report_lines:
+        report_lines.append("No se aplicaron cambios de código.")
+    return ApplyResult(
+        saved_files=list(dict.fromkeys(saved_files)),
+        patch_files=patch_files,
+        rejected=rejected,
+        report="\n".join(report_lines),
+    )
+
+
+def _check_command_policy(command: str) -> CommandPolicyResult:
+    stripped = command.strip()
+    if not stripped:
+        return CommandPolicyResult(False, "comando vacío")
+    for pattern in BLOCKED_COMMAND_PATTERNS:
+        if pattern.search(stripped):
+            return CommandPolicyResult(False, "comando bloqueado por política de seguridad")
+    return CommandPolicyResult(True)
 
 
 def _normalize_shell_command(command: str) -> list[str]:
     stripped = command.strip()
+    parts = shlex.split(stripped, posix=sys.platform != "win32")
     if stripped.startswith("pytest "):
-        return [sys.executable, "-m", "pytest", *stripped.split()[1:]]
+        return [sys.executable, "-m", "pytest", *parts[1:]]
     if stripped == "pytest":
         return [sys.executable, "-m", "pytest"]
     if stripped.startswith("python "):
-        return [sys.executable, *stripped.split()[1:]]
+        return [sys.executable, *parts[1:]]
+    if stripped.startswith("pip install "):
+        return [sys.executable, "-m", "pip", "install", *parts[2:]]
     return ["cmd", "/c", stripped] if sys.platform == "win32" else ["bash", "-c", stripped]
 
 
@@ -186,6 +385,13 @@ def _run_bash_blocks(text: str, log: Callable[[str], None]) -> tuple[bool, str]:
             if line.strip() and not line.strip().startswith("#")
         ]
         for cmd_str in commands:
+            policy = _check_command_policy(cmd_str)
+            if not policy.allowed:
+                ok = False
+                report = f"$ {cmd_str}\nBLOQUEADO: {policy.reason}"
+                reports.append(report)
+                log(report)
+                continue
             log(f"Ejecutando dependencias/comandos bash:\n{cmd_str}")
             try:
                 cmd = _normalize_shell_command(cmd_str)
@@ -260,16 +466,47 @@ def _validate_saved_files(saved_files: list[str]) -> str:
     return "\n\n".join(reports)
 
 
-def _run_tests() -> str:
+def _related_test_paths(saved_files: list[str]) -> list[str]:
+    related: list[str] = []
+    for rel_path in saved_files:
+        path = rel_path.replace("\\", "/")
+        if path.startswith("tests/") and path.endswith(".py"):
+            related.append(path)
+            continue
+        stem = Path(path).stem
+        if not stem:
+            continue
+        for candidate in (
+            f"tests/test_{stem}.py",
+            f"tests/{stem}_test.py",
+        ):
+            if (_repo_root() / candidate).is_file():
+                related.append(candidate)
+    return list(dict.fromkeys(related))
+
+
+def _run_tests(saved_files: list[str] | None = None) -> str:
     """Ejecuta los tests del proyecto y devuelve el output."""
-    root = Path(__file__).resolve().parent.parent
-    cmd = [sys.executable, "-m", "pytest", "tests/", "-q", "--tb=short"]
-    try:
-        r = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=60)
-        out = r.stdout + "\n" + r.stderr
-        return f"Exit code: {r.returncode}\n{out.strip()}"
-    except Exception as e:
-        return f"Error ejecutando tests: {e}"
+    root = _repo_root()
+    reports: list[str] = []
+    related = _related_test_paths(saved_files or [])
+    commands = []
+    if related:
+        commands.append(("tests relacionados", [sys.executable, "-m", "pytest", *related, "-q", "--tb=short"]))
+    commands.append(("suite completa", [sys.executable, "-m", "pytest", "tests/", "-q", "--tb=short"]))
+    overall_ok = True
+    for label, cmd in commands:
+        try:
+            r = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=90)
+            out = (r.stdout + "\n" + r.stderr).strip()
+            reports.append(f"## {label}\nComando: {' '.join(cmd)}\nExit code: {r.returncode}\n{out}")
+            if r.returncode != 0:
+                overall_ok = False
+        except Exception as e:
+            overall_ok = False
+            reports.append(f"## {label}\nError ejecutando tests: {e}")
+    header = "Exit code: 0" if overall_ok else "Exit code: 1"
+    return header + "\n" + "\n\n".join(reports)
 
 
 def run_one_feature_cycle(
@@ -314,6 +551,7 @@ def run_one_feature_cycle(
     skills_x = enabled_skills_context() + "\n\n--- Recomendador aprendido de herramientas ---\n" + learned_tools_context(feature_query)
     memory_x = shared_memory_context(query=feature_query, limit=10)
     improvements_x = self_improvement_context(limit=6)
+    repo_context_x = _build_repo_context(feat)
     arch_x = _read_head(DOCS_DIR / "architecture.md", 3500)
     conv_x = _read_head(DOCS_DIR / "conventions.md", 2500)
     ver_x = _read_head(DOCS_DIR / "verification.md", 2500)
@@ -356,6 +594,7 @@ def run_one_feature_cycle(
                 conventions_excerpt=conv_x,
                 memory_excerpt=memory_x,
                 internal_context=internal_x,
+                repo_context=repo_context_x,
                 previous_feedback=previous_feedback,
             ),
             llm_chat=llm_chat,
@@ -368,27 +607,38 @@ def run_one_feature_cycle(
         )
 
         log("Aplicando cambios al sistema de archivos...")
-        saved_files = _apply_code_blocks(impl_body)
+        apply_result = _apply_code_blocks(impl_body)
+        saved_files = apply_result.changed_files
         if saved_files:
             log(f"Archivos creados/modificados: {', '.join(saved_files)}")
         else:
             log("No se detectaron bloques de código para guardar.")
+        if apply_result.rejected:
+            log("Bloques rechazados: " + "; ".join(apply_result.rejected))
 
         bash_ok, bash_output = _run_bash_blocks(impl_body, log)
 
         log("Validando archivos creados/modificados…")
         validation_output = _validate_saved_files(saved_files)
+        change_evidence = (
+            "## Aplicación de cambios\n"
+            f"{apply_result.report}\n\n"
+            "## Archivos modificados por el harness\n"
+            f"{', '.join(saved_files) if saved_files else '(ninguno)'}\n\n"
+            "## Bloques rechazados\n"
+            f"{'; '.join(apply_result.rejected) if apply_result.rejected else '(ninguno)'}"
+        )
         debug_path = PROGRESS_DIR / f"debug_{slug}_attempt_{attempt + 1}.md"
         debug_path.write_text(
             f"# Debug · {feat.get('title')} (Intento {attempt + 1})\n\n"
-            f"## Archivos\n{', '.join(saved_files) if saved_files else '(ninguno)'}\n\n"
+            f"{change_evidence}\n\n"
             f"## Validación\n```text\n{validation_output}\n```\n",
             encoding="utf-8",
         )
         log(f"Debug guardado: {debug_path.name}")
 
         log("Ejecutando tests automatizados…")
-        test_output = _run_tests()
+        test_output = _run_tests(saved_files)
         test_output = (
             "## Comandos bash del implementador\n"
             f"{bash_output}\n\n"
@@ -409,6 +659,7 @@ def run_one_feature_cycle(
                 verification_excerpt=ver_x,
                 checkpoints_excerpt=cp_x,
                 test_output=test_output,
+                change_evidence=change_evidence,
             ),
             llm_chat=llm_chat,
             num_predict=num_predict_leader,
@@ -420,9 +671,12 @@ def run_one_feature_cycle(
         )
 
         verdict = parse_verdict(review_body)
-        if verdict is True and not bash_ok:
+        if verdict is True and (not bash_ok or apply_result.rejected):
             verdict = False
-            review_body += "\n\nVEREDICTO SOBRESCRITO POR HARNESS: fallaron comandos bash del implementador."
+            review_body += (
+                "\n\nVEREDICTO SOBRESCRITO POR HARNESS: fallaron comandos bash "
+                "o se rechazaron bloques de cambio."
+            )
         if verdict is True:
             break
         else:
