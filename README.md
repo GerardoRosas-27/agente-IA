@@ -42,6 +42,10 @@ python -m harness.cli run --llm-profile deepseek_v4
 | `python -m harness.cli benchmark` | Mide capacidades locales del harness |
 | `python -m harness.cli agent "objetivo"` | Ejecuta un agente con herramientas, sesiones y checkpoints |
 | `python -m harness.cli learn` | Consolida aprendizaje desde uso real del agente |
+| `python -m harness.cli pipeline "issue" --patch fix.patch` | Ejecuta localizar → patch → validar |
+| `python -m harness.cli best-patch a.patch b.patch` | Evalúa candidatos en worktrees/copies aisladas |
+| `python -m harness.cli code-benchmark` | Ejecuta tareas JSON estilo SWE-bench propias |
+| `python -m harness.cli contracts` | Muestra SOPs de roles multiagente |
 
 También puedes usar `python -m harness` en lugar de `python -m harness.cli` (mismos subcomandos).
 
@@ -102,6 +106,15 @@ El sistema registra señales de uso del agente (`search`, `read`, `patch`,
 puntaje. `python -m harness.cli learn` consolida esos eventos en patrones
 persistentes (`learned_pattern`) y feedback operacional para que el router mejore
 sus recomendaciones con experiencia real, no con datasets sintéticos.
+
+### Pipeline y multiagente
+
+El harness incluye un pipeline determinista inspirado en SWE-agent/Agentless:
+localiza archivos candidatos, aplica patches, ejecuta validación objetiva y
+guarda una trayectoria completa. Para explorar soluciones, `best-patch` evalúa
+varios diffs en worktrees o copias aisladas y elige el mejor por tests/score.
+Los contratos SOP (`contracts`) fijan handoffs entre localizador, diseñador de
+patch, implementador, tester, revisor y curador de memoria.
 
 ## Prueba opcional contra LM Studio real
 

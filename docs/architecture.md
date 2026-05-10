@@ -13,6 +13,13 @@
 | `harness/agent_loop.py` | Loop observar → actuar → observar con herramientas controladas, sesiones y checkpoints |
 | `harness/evaluator.py` | Checks objetivos para compilar, testear y bloquear comandos riesgosos |
 | `harness/benchmarks.py` | Benchmarks locales para medir capacidades del harness |
+| `harness/coding_pipeline.py` | Pipeline localizar → reparar → validar con trayectorias |
+| `harness/best_of_n.py` | Evaluación de patches candidatos en worktrees/copies aisladas |
+| `harness/trajectories.py` | Registro persistente de episodios completos de agente |
+| `harness/reflection.py` | Reflexiones accionables después de fallos |
+| `harness/skill_promotion.py` | Promoción de soluciones exitosas a skills reutilizables |
+| `harness/benchmark_tasks.py` | Benchmarks propios estilo SWE-bench en JSON |
+| `harness/multiagent_contracts.py` | SOPs y validación de artefactos por rol |
 | **`api_endpoints/whatsapp_hook.py`** | **Maneja la recepción, verificación y parsing de payloads Webhook externos (ej. WhatsApp).** |
 
 ## Backends LLM

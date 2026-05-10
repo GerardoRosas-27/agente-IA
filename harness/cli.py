@@ -9,7 +9,10 @@ from pathlib import Path
 from llm_api_client import resolve_llm_chat_for_pipeline
 
 from harness.agent_loop import load_agent_session, run_agent_loop, save_agent_session
+from harness.benchmark_tasks import run_code_benchmark_tasks
 from harness.benchmarks import benchmark_summary, run_benchmarks
+from harness.best_of_n import choose_best_patch
+from harness.coding_pipeline import run_localize_patch_validate
 from harness.evaluator import evaluate_changes
 from harness.auto_training import consolidate_runtime_learning, latest_training_context, run_training_cycle
 from harness.feature_store import (
@@ -18,6 +21,7 @@ from harness.feature_store import (
 )
 from harness.orchestrator import expand_features_from_goal, run_one_feature_cycle
 from harness.llm import invoke_llm
+from harness.multiagent_contracts import contracts_context
 from harness.paths import FEATURE_LIST_PATH
 from harness.paths import PROGRESS_DIR, REPO_ROOT
 from harness.repo_index import repo_context_for_goal
@@ -133,6 +137,49 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     print(benchmark_summary(results))
     print(f"Reporte: {output}")
     return 0 if all(result.passed for result in results) else 1
+
+
+def _cmd_code_benchmark(args: argparse.Namespace) -> int:
+    results = run_code_benchmark_tasks(root=REPO_ROOT, tasks_dir=Path(args.tasks_dir))
+    if not results:
+        print("No hay benchmark tasks.")
+        return 0
+    for result in results:
+        status = "PASS" if result.passed else "FAIL"
+        print(f"{status} {result.task_id}\n{result.report[: args.max_output]}\n")
+    return 0 if all(result.passed for result in results) else 1
+
+
+def _cmd_pipeline(args: argparse.Namespace) -> int:
+    patch_text = Path(args.patch).read_text(encoding="utf-8") if args.patch else None
+    result = run_localize_patch_validate(
+        args.goal,
+        root=REPO_ROOT,
+        patch_text=patch_text,
+        extra_commands=args.command or [],
+        trajectory_id=args.trajectory or "",
+    )
+    print(result.localization.rationale)
+    if result.validation:
+        print(result.validation.report[: args.max_output])
+    print("Veredicto:", "PASS" if result.ok else result.trajectory.verdict)
+    return 0 if result.ok or not patch_text else 1
+
+
+def _cmd_best_patch(args: argparse.Namespace) -> int:
+    patches = [Path(path).read_text(encoding="utf-8") for path in args.patches]
+    best = choose_best_patch(patches, root=REPO_ROOT, extra_commands=args.command or [])
+    if best is None:
+        print("No hay patches candidatos.")
+        return 1
+    print(f"Mejor patch: #{best.index} ok={best.ok} score={best.score}")
+    print(best.report[: args.max_output])
+    return 0 if best.ok else 1
+
+
+def _cmd_contracts(_args: argparse.Namespace) -> int:
+    print(contracts_context())
+    return 0
 
 
 def _cmd_agent(args: argparse.Namespace) -> int:
@@ -278,6 +325,28 @@ def build_parser() -> argparse.ArgumentParser:
     s_bench = sub.add_parser("benchmark", help="Ejecuta benchmarks locales del harness")
     s_bench.add_argument("--output", default="", help="Ruta JSON para guardar resultados")
     s_bench.set_defaults(func=_cmd_benchmark)
+
+    s_code_bench = sub.add_parser("code-benchmark", help="Ejecuta benchmark tasks estilo SWE-bench")
+    s_code_bench.add_argument("--tasks-dir", default=str(PROGRESS_DIR / "benchmark_tasks"))
+    s_code_bench.add_argument("--max-output", type=int, default=3000)
+    s_code_bench.set_defaults(func=_cmd_code_benchmark)
+
+    s_pipeline = sub.add_parser("pipeline", help="Ejecuta localize -> patch -> validate")
+    s_pipeline.add_argument("goal", help="Objetivo o issue")
+    s_pipeline.add_argument("--patch", default="", help="Archivo con diff unificado para aplicar y validar")
+    s_pipeline.add_argument("--command", action="append", default=[], help="Comando adicional permitido")
+    s_pipeline.add_argument("--trajectory", default="", help="ID de trayectoria")
+    s_pipeline.add_argument("--max-output", type=int, default=5000)
+    s_pipeline.set_defaults(func=_cmd_pipeline)
+
+    s_best = sub.add_parser("best-patch", help="Evalúa patches candidatos en worktrees aislados")
+    s_best.add_argument("patches", nargs="+", help="Archivos .patch candidatos")
+    s_best.add_argument("--command", action="append", default=[], help="Comando adicional permitido")
+    s_best.add_argument("--max-output", type=int, default=5000)
+    s_best.set_defaults(func=_cmd_best_patch)
+
+    s_contracts = sub.add_parser("contracts", help="Muestra contratos SOP multiagente")
+    s_contracts.set_defaults(func=_cmd_contracts)
 
     s_agent = sub.add_parser("agent", help="Ejecuta un agente interactivo con herramientas controladas")
     s_agent.add_argument("goal", nargs="?", default="", help="Objetivo de trabajo del agente")
