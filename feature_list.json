@@ -128,7 +128,7 @@
         "El sistema debe recibir el contenido de cualquier mensaje entrante (texto, imagen, etc.).",
         "Debe identificar correctamente la fuente del mensaje (el remitente)."
       ],
-      "status": "pending",
+      "status": "in_progress",
       "origin": "user"
     },
     {
@@ -243,7 +243,9 @@
       ],
       "status": "pending",
       "origin": "user",
-      "depends_on": [18]
+      "depends_on": [
+        18
+      ]
     },
     {
       "id": 20,
@@ -254,6 +256,42 @@
         "review_<slug>.md incluye una tabla con score por criterio además de la línea VERDICT.",
         "El score global es PASS solo si todos los criterios hard (tests, .env, imports) pasan y el promedio ≥ 0.65.",
         "Tests en tests/test_mcts_review.py reproducen el caso 'todos los criterios pasan ⇒ PASS' y 'falla un hard ⇒ FAIL'."
+      ],
+      "status": "pending",
+      "origin": "user"
+    },
+    {
+      "id": 21,
+      "name": "qr_to_whatsapp_session_adapter",
+      "title": "Adapter for QR Scan to WhatsApp Session Initialization",
+      "description": "Create an adapter that takes raw data from `qr_scan_handler` and uses `whatsapp_connector` to initiate a session or login process via WhatsApp.",
+      "acceptance": [
+        "Successfully initiates a WhatsApp session using QR scan data.",
+        "The output format is compatible with the input expected by `whatsapp_connector`."
+      ],
+      "status": "pending",
+      "origin": "user"
+    },
+    {
+      "id": 22,
+      "name": "whatsapp_to_node_executor",
+      "title": "Adapter for WhatsApp Context to Node Execution",
+      "description": "Create an adapter that translates relevant session or command data extracted from `whatsapp_connector` into actionable inputs for the `node_execution_environment`.",
+      "acceptance": [
+        "Successfully extracts necessary variables (e.g., session tokens, commands) from WhatsApp context.",
+        "The input format is correctly mapped to arguments/environment variables for Node execution."
+      ],
+      "status": "pending",
+      "origin": "user"
+    },
+    {
+      "id": 23,
+      "name": "end_to_end_qr_whatsapp_node_flow",
+      "title": "End-to-End Flow for QR Login and Execution",
+      "description": "Implement a composite flow that chains `qr_scan_handler` -> `whatsapp_connector` -> `node_execution_environment` to execute a custom script based on a QR login.",
+      "acceptance": [
+        "The entire sequence executes successfully end-to-end.",
+        "A Node.js script is executed within the environment using data derived from the WhatsApp session."
       ],
       "status": "pending",
       "origin": "user"

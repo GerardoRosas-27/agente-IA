@@ -76,3 +76,8 @@
 ## [2026-05-09T15:52:05] Entrada
 
 - **2026-05-09T15:52:05** feature `whatsapp_message_listener` (id=10) → **FAIL** (pending de nuevo). Motivo en `review_whatsapp_message_listener.md`.
+
+
+## [2026-05-15T22:53:27] Entrada
+
+- **2026-05-15T22:53:27** inicializador: +3 features desde objetivo de usuario.

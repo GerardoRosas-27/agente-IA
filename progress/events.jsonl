@@ -90,3 +90,5 @@
 {"ts": "2026-05-10T06:16:25", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
 {"ts": "2026-05-10T06:16:25", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
 {"ts": "2026-05-10T06:16:25", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-15T22:53:32", "event": "cycle.started", "role": "leader", "feature_id": 10, "feature_name": "whatsapp_message_listener"}
+{"ts": "2026-05-15T22:56:40", "event": "leader.planned", "feature_id": 10, "feature_name": "whatsapp_message_listener", "length": 850}
