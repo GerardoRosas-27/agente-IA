@@ -92,3 +92,110 @@
 {"ts": "2026-05-10T06:16:25", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
 {"ts": "2026-05-15T22:53:32", "event": "cycle.started", "role": "leader", "feature_id": 10, "feature_name": "whatsapp_message_listener"}
 {"ts": "2026-05-15T22:56:40", "event": "leader.planned", "feature_id": 10, "feature_name": "whatsapp_message_listener", "length": 850}
+{"ts": "2026-05-20T11:39:48", "event": "test.event", "data": "hello"}
+{"ts": "2026-05-20T11:39:48", "event": "test.error", "foo": "bar"}
+{"ts": "2026-05-20T11:39:48", "event": "event_bus.subscriber_error", "subscriber": "bad_callback", "error": "Algo falló en el suscriptor"}
+{"ts": "2026-05-20T11:41:11", "event": "daemon.started", "status": "running"}
+{"ts": "2026-05-20T11:41:11", "event": "daemon.task_submitted", "task_id": "task_20260520_114111", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:41:11", "event": "daemon.task_started", "task_id": "task_20260520_114111", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:41:11", "event": "daemon.subgoal_started", "task_id": "task_20260520_114111", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:41:12", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114111", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:41:12", "event": "daemon.subgoal_started", "task_id": "task_20260520_114111", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:41:13", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114111", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:41:13", "event": "daemon.subgoal_started", "task_id": "task_20260520_114111", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:41:14", "event": "daemon.task_cancelled", "task_id": "task_20260520_114111", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:41:14", "event": "daemon.stopped", "status": "stopped"}
+{"ts": "2026-05-20T11:41:41", "event": "daemon.started", "status": "running"}
+{"ts": "2026-05-20T11:41:41", "event": "daemon.task_submitted", "task_id": "task_20260520_114141", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:41:41", "event": "daemon.task_started", "task_id": "task_20260520_114141", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:41:41", "event": "daemon.subgoal_started", "task_id": "task_20260520_114141", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:41:41", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114141", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:41:41", "event": "daemon.subgoal_started", "task_id": "task_20260520_114141", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:41:41", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114141", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:41:41", "event": "daemon.subgoal_started", "task_id": "task_20260520_114141", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:41:41", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114141", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:41:41", "event": "daemon.task_completed", "task_id": "task_20260520_114141", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:41:43", "event": "daemon.stopped", "status": "stopped"}
+{"ts": "2026-05-20T11:41:44", "event": "daemon.task_submitted", "task_id": "task_20260520_114144", "goal": "Implementar nueva feature"}
+{"ts": "2026-05-20T11:42:00", "event": "daemon.started", "status": "running"}
+{"ts": "2026-05-20T11:42:00", "event": "daemon.task_submitted", "task_id": "task_20260520_114200", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:42:00", "event": "daemon.task_started", "task_id": "task_20260520_114200", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:42:00", "event": "daemon.subgoal_started", "task_id": "task_20260520_114200", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:42:00", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114200", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:42:00", "event": "daemon.subgoal_started", "task_id": "task_20260520_114200", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:42:00", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114200", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:42:00", "event": "daemon.subgoal_started", "task_id": "task_20260520_114200", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:42:00", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114200", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:42:00", "event": "daemon.task_completed", "task_id": "task_20260520_114200", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:42:02", "event": "daemon.stopped", "status": "stopped"}
+{"ts": "2026-05-20T11:42:02", "event": "daemon.task_submitted", "task_id": "task_20260520_114202", "goal": "Implementar nueva feature"}
+{"ts": "2026-05-20T11:44:38", "event": "daemon.started", "status": "running"}
+{"ts": "2026-05-20T11:44:38", "event": "daemon.task_submitted", "task_id": "task_20260520_114438", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:44:38", "event": "daemon.task_started", "task_id": "task_20260520_114438", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:44:38", "event": "daemon.subgoal_started", "task_id": "task_20260520_114438", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:44:38", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114438", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:44:38", "event": "daemon.subgoal_started", "task_id": "task_20260520_114438", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:44:38", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114438", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:44:38", "event": "daemon.subgoal_started", "task_id": "task_20260520_114438", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:44:39", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114438", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:44:39", "event": "daemon.task_completed", "task_id": "task_20260520_114438", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:44:40", "event": "daemon.stopped", "status": "stopped"}
+{"ts": "2026-05-20T11:44:40", "event": "daemon.task_submitted", "task_id": "task_20260520_114440", "goal": "Implementar nueva feature"}
+{"ts": "2026-05-20T11:44:43", "event": "test.event", "data": "hello"}
+{"ts": "2026-05-20T11:44:43", "event": "test.error", "foo": "bar"}
+{"ts": "2026-05-20T11:44:43", "event": "event_bus.subscriber_error", "subscriber": "bad_callback", "error": "Algo falló en el suscriptor"}
+{"ts": "2026-05-20T11:44:45", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-20T11:44:45", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-20T11:44:45", "event": "adversarial_reviewer.verdict", "role": "adversarial_reviewer", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail"}
+{"ts": "2026-05-20T11:44:45", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-20T11:44:46", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-20T11:44:46", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-20T11:44:46", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "pass"}
+{"ts": "2026-05-20T11:44:47", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-20T11:44:47", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-20T11:44:48", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
+{"ts": "2026-05-20T11:44:48", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
+{"ts": "2026-05-20T11:44:48", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-20T11:49:37", "event": "daemon.started", "status": "running"}
+{"ts": "2026-05-20T11:49:37", "event": "daemon.task_submitted", "task_id": "task_20260520_114937_232611_d3498a", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:49:37", "event": "daemon.task_started", "task_id": "task_20260520_114937_232611_d3498a", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:49:37", "event": "daemon.subgoal_started", "task_id": "task_20260520_114937_232611_d3498a", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:49:37", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114937_232611_d3498a", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:49:37", "event": "daemon.subgoal_started", "task_id": "task_20260520_114937_232611_d3498a", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:49:37", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114937_232611_d3498a", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:49:37", "event": "daemon.subgoal_started", "task_id": "task_20260520_114937_232611_d3498a", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:49:37", "event": "daemon.subgoal_completed", "task_id": "task_20260520_114937_232611_d3498a", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:49:37", "event": "daemon.task_completed", "task_id": "task_20260520_114937_232611_d3498a", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:49:39", "event": "daemon.stopped", "status": "stopped"}
+{"ts": "2026-05-20T11:49:39", "event": "daemon.task_submitted", "task_id": "task_20260520_114939_336370_43f8ca", "goal": "Implementar nueva feature"}
+{"ts": "2026-05-20T11:49:39", "event": "daemon.task_submitted", "task_id": "task_20260520_114939_405781_15383a", "goal": "Primera tarea"}
+{"ts": "2026-05-20T11:49:39", "event": "daemon.task_submitted", "task_id": "task_20260520_114939_420390_c62c24", "goal": "Segunda tarea"}
+{"ts": "2026-05-20T11:50:54", "event": "daemon.started", "status": "running"}
+{"ts": "2026-05-20T11:50:54", "event": "daemon.task_submitted", "task_id": "task_20260520_115054_129905_050927", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:50:54", "event": "daemon.task_started", "task_id": "task_20260520_115054_129905_050927", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:50:54", "event": "daemon.subgoal_started", "task_id": "task_20260520_115054_129905_050927", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:50:54", "event": "daemon.subgoal_completed", "task_id": "task_20260520_115054_129905_050927", "subgoal_id": "analizar"}
+{"ts": "2026-05-20T11:50:54", "event": "daemon.subgoal_started", "task_id": "task_20260520_115054_129905_050927", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:50:54", "event": "daemon.subgoal_completed", "task_id": "task_20260520_115054_129905_050927", "subgoal_id": "implementar"}
+{"ts": "2026-05-20T11:50:54", "event": "daemon.subgoal_started", "task_id": "task_20260520_115054_129905_050927", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:50:54", "event": "daemon.subgoal_completed", "task_id": "task_20260520_115054_129905_050927", "subgoal_id": "verificar"}
+{"ts": "2026-05-20T11:50:54", "event": "daemon.task_completed", "task_id": "task_20260520_115054_129905_050927", "goal": "Ejecutar tarea daemon de prueba"}
+{"ts": "2026-05-20T11:50:56", "event": "daemon.stopped", "status": "stopped"}
+{"ts": "2026-05-20T11:50:56", "event": "daemon.task_submitted", "task_id": "task_20260520_115056_213266_019223", "goal": "Implementar nueva feature"}
+{"ts": "2026-05-20T11:50:56", "event": "daemon.task_submitted", "task_id": "task_20260520_115056_282980_907352", "goal": "Primera tarea"}
+{"ts": "2026-05-20T11:50:56", "event": "daemon.task_submitted", "task_id": "task_20260520_115056_296118_44d7a1", "goal": "Segunda tarea"}
+{"ts": "2026-05-20T11:50:58", "event": "test.event", "data": "hello"}
+{"ts": "2026-05-20T11:50:58", "event": "test.error", "foo": "bar"}
+{"ts": "2026-05-20T11:50:58", "event": "event_bus.subscriber_error", "subscriber": "bad_callback", "error": "Algo falló en el suscriptor"}
+{"ts": "2026-05-20T11:51:00", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-20T11:51:00", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-20T11:51:01", "event": "adversarial_reviewer.verdict", "role": "adversarial_reviewer", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail"}
+{"ts": "2026-05-20T11:51:01", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}
+{"ts": "2026-05-20T11:51:01", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-20T11:51:01", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-20T11:51:02", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "pass"}
+{"ts": "2026-05-20T11:51:02", "event": "cycle.started", "role": "leader", "feature_id": 1, "feature_name": "demo_feature"}
+{"ts": "2026-05-20T11:51:02", "event": "leader.planned", "feature_id": 1, "feature_name": "demo_feature", "length": 14}
+{"ts": "2026-05-20T11:51:03", "event": "verifier.verdict", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "outcome": "fail", "score": 0.7647}
+{"ts": "2026-05-20T11:51:03", "event": "verifier.override", "role": "verifier", "feature_id": 1, "feature_name": "demo_feature", "attempt": 1, "score": 0.7647}
+{"ts": "2026-05-20T11:51:03", "event": "cycle.finished", "feature_id": 1, "feature_name": "demo_feature", "outcome": "fail"}

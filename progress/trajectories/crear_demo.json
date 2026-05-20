@@ -7,21 +7,21 @@
       "observation": "- benchmark_demo: pass \n- crear_demo: pass ",
       "success": true,
       "score": 0.5,
-      "created_at": 1778415376.3229904
+      "created_at": 1779299450.0879269
     },
     {
       "action": "localize",
       "observation": "## Archivos candidatos\nNo se encontraron archivos candidatos.\n\n## Símbolos/líneas candidatos\nNo se encontraron símbolos candidatos.",
       "success": false,
       "score": -0.5,
-      "created_at": 1778415376.3291728
+      "created_at": 1779299450.0927117
     },
     {
       "action": "patch_validate",
       "observation": "Patch 1 aplicado: demo.py\n\n$ C:\\Python313\\python.exe -m py_compile demo.py\nExit code: 0",
       "success": true,
       "score": 1.0,
-      "created_at": 1778415377.3452394
+      "created_at": 1779299451.0789824
     }
   ],
   "patches": [

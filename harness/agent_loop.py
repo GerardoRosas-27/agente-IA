@@ -206,6 +206,37 @@ def _json_action(text: str) -> dict[str, Any]:
 def execute_tool_action(action: dict[str, Any], *, root: Path | None = None) -> ToolObservation:
     root = root or _repo_root()
     kind = str(action.get("action") or "").strip()
+
+    # Evaluar riesgo bajo el Protocolo de Acción del Agente (AAP)
+    from harness.aap.protocol import aap_protocol, AAPApprovalStatus, RiskLevel
+    risk = aap_protocol.determine_risk_level(action)
+    if risk == RiskLevel.RED:
+        token = action.get("approval_token")
+        if not token:
+            new_token = aap_protocol.request_approval(action)
+            return ToolObservation(
+                kind,
+                False,
+                f"BLOQUEADO POR SEGURIDAD (Nivel de Riesgo 3 - RED). Requiere consentimiento humano. "
+                f"Token de aprobación generado: {new_token}. "
+                f"Por favor, aprueba la acción usando el protocolo de consentimiento antes de reintentar con este token: "
+                f'{{"action": "{kind}", ..., "approval_token": "{new_token}"}}'
+            )
+        else:
+            status = aap_protocol.check_approval_status(token)
+            if status != AAPApprovalStatus.APPROVED:
+                return ToolObservation(
+                    kind,
+                    False,
+                    f"BLOQUEADO POR SEGURIDAD. El token de aprobación '{token}' está en estado '{status.value}'."
+                )
+            if not aap_protocol.approval_matches_action(token, action):
+                return ToolObservation(
+                    kind,
+                    False,
+                    f"BLOQUEADO POR SEGURIDAD. El token de aprobación '{token}' no corresponde a esta acción."
+                )
+
     if kind == "read":
         rel_path = str(action.get("path") or "")
         full_path, reason = _resolve_repo_path(rel_path, root)
