@@ -13,6 +13,9 @@ from typing import Any, Callable
 
 from harness.auto_training import record_user_session_training
 from harness.events import emit_event
+from harness.adr import create_adr_for_change
+from harness.quality_gates import evaluate_quality_gates, gates_markdown
+from harness.review_score import aggregate_review_score, review_score_markdown, score_review_axes
 from harness.test_generator import (
     GeneratedTestSuite,
     generate_repro_tests,
@@ -39,7 +42,9 @@ from harness.shared_memory import (
     shared_memory_context,
 )
 from harness.repo_index import clear_repo_index_memory_cache, repo_context_for_goal
+from harness.reflection import debugging_recovery_checklist
 from harness.tool_learning import internal_execution_context, learned_tools_context
+from harness.workflow_router import route_workflows_for_feature, workflow_context
 from harness.paths import (
     AGENTS_MD,
     CHECKPOINTS_MD,
@@ -604,8 +609,16 @@ def run_one_feature_cycle(
     agents_x = _read_head(AGENTS_MD, 3500)
     cp_x = _read_head(CHECKPOINTS_MD, 2500)
     feature_query = str(feat.get("name") or feat.get("title") or "")
+    workflow_recommendations = route_workflows_for_feature(feat)
+    workflows_x = workflow_context(workflow_recommendations)
     internal_x = internal_execution_context(feature_query)
-    skills_x = enabled_skills_context() + "\n\n--- Recomendador aprendido de herramientas ---\n" + learned_tools_context(feature_query)
+    skills_x = (
+        enabled_skills_context()
+        + "\n\n--- Workflows recomendados ---\n"
+        + workflows_x
+        + "\n\n--- Recomendador aprendido de herramientas ---\n"
+        + learned_tools_context(feature_query)
+    )
     memory_x = shared_memory_context(query=feature_query, limit=10)
     improvements_x = self_improvement_context(limit=6)
     repo_context_x = _build_repo_context(feat)
@@ -764,6 +777,48 @@ def run_one_feature_cycle(
         )
 
         verdict = parse_verdict(review_body)
+        workflow_names = [item.name for item in workflow_recommendations]
+        quality_gates = evaluate_quality_gates(
+            workflows=workflow_names,
+            changed_files=saved_files,
+            implementation_text=impl_body,
+            review_text=review_body,
+            test_output=test_output,
+            validation_output=validation_output,
+        )
+        failed_gates = [gate.name for gate in quality_gates if not gate.passed]
+        hard_gate_fail = any(gate.hard and not gate.passed for gate in quality_gates)
+        review_scores = score_review_axes(
+            review_text=review_body,
+            test_output=test_output,
+            changed_files=saved_files,
+            quality_gate_failures=failed_gates,
+        )
+        review_score_passed, review_score = aggregate_review_score(review_scores)
+        review_body += "\n\n" + gates_markdown(quality_gates)
+        review_body += "\n\n" + review_score_markdown(review_scores)
+        review_path.write_text(
+            f"# Revisión · {feat.get('title')} (Intento {attempt + 1})\n\n{review_body}\n\n## Output de Tests\n```text\n{test_output}\n```\n",
+            encoding="utf-8",
+        )
+        emit_event(
+            "quality_gates.evaluated",
+            feature_id=fid,
+            feature_name=slug,
+            attempt=attempt + 1,
+            failed=failed_gates,
+            review_score=review_score,
+        )
+        if verdict is True and (hard_gate_fail or not review_score_passed):
+            verdict = False
+            review_body += (
+                "\n\nVEREDICTO SOBRESCRITO POR QUALITY GATES: "
+                f"failed={failed_gates or '(ninguno)'} review_score={review_score:.3f}."
+            )
+            review_path.write_text(
+                f"# Revisión · {feat.get('title')} (Intento {attempt + 1})\n\n{review_body}\n\n## Output de Tests\n```text\n{test_output}\n```\n",
+                encoding="utf-8",
+            )
         if verdict is True and (not bash_ok or apply_result.rejected):
             verdict = False
             review_body += (
@@ -835,6 +890,7 @@ def run_one_feature_cycle(
                     rejected=apply_result.rejected,
                     bash_ok=bash_ok,
                     bug_reproduction_runs=brt_runs,
+                    quality_gates=quality_gates if "quality_gates" in locals() else (),
                     root=_repo_root(),
                 )
             except Exception as exc:
@@ -890,6 +946,19 @@ def run_one_feature_cycle(
 
     data = load_feature_list(FEATURE_LIST_PATH)
     if verdict is True:
+        adr_result = create_adr_for_change(
+            title=str(feat.get("title") or slug),
+            changed_files=saved_files if "saved_files" in locals() else [],
+            implementation_text=impl_body,
+            docs_dir=DOCS_DIR,
+        )
+        if adr_result.created:
+            emit_event(
+                "adr.created",
+                feature_id=fid,
+                feature_name=slug,
+                path=adr_result.path,
+            )
         set_feature_status(data, fid, "done")
         sync_skills()
         remember(
@@ -909,12 +978,19 @@ def run_one_feature_cycle(
                     success=True,
                     outcome="feature aprobada",
                 )
-        msg = f"Feature {fid} marcada done. Artefactos: {impl_path.name}, {review_path.name}"
+        adr_note = f", ADR: {adr_result.path.name}" if adr_result.created else ""
+        msg = f"Feature {fid} marcada done. Artefactos: {impl_path.name}, {review_path.name}{adr_note}"
         _append_history_line(
             f"- **{stamp_summary()}** feature `{slug}` (id={fid}) → **DONE**. "
             f"Ver `{impl_path.name}` y `{review_path.name}`."
         )
     elif verdict is False:
+        recovery = "\n".join(f"- {item}" for item in debugging_recovery_checklist(str(feat.get("title") or slug), review_body))
+        _append_markdown(
+            PROGRESS_DIR / f"debugging_recovery_{slug}.md",
+            "Checklist de recuperación",
+            recovery,
+        )
         set_feature_status(data, fid, "pending")
         remember(
             "feature_failure",

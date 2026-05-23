@@ -50,6 +50,21 @@ def build_failure_reflection(goal: str, failure_report: str, *, last_action: str
     return "\n".join(lines)
 
 
+def debugging_recovery_checklist(goal: str, failure_report: str) -> list[str]:
+    """Checklist sistemática inspirada en debugging-and-error-recovery."""
+    category = classify_failure(failure_report)
+    return [
+        f"Objetivo: {goal}",
+        "Reproducir el fallo con el comando o test más pequeño posible.",
+        f"Clasificar el fallo actual: {category}.",
+        "Localizar la capa responsable (test, import, patch, runtime, servicio externo).",
+        "Reducir el caso hasta la entrada mínima que falla.",
+        "Corregir la causa raíz, no solo el síntoma.",
+        "Agregar una prueba, gate o evidencia que prevenga recurrencia.",
+        "Reanudar solo cuando la verificación relevante pase.",
+    ]
+
+
 def reflect_on_trajectory(
     trajectory: AgentTrajectory,
     *,

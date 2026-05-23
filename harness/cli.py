@@ -30,6 +30,7 @@ from harness.shared_memory import (
     shared_memory_context,
     skill_memory_context,
 )
+from harness.skill_registry import import_markdown_skills
 from harness.tool_learning import internal_execution_context, learned_tools_context, learn_tool_outcome
 
 
@@ -95,6 +96,19 @@ def _cmd_tools(args: argparse.Namespace) -> int:
         print(internal_execution_context(args.goal or ""))
     else:
         print(learned_tools_context(args.goal or "", limit=args.limit))
+    return 0
+
+
+def _cmd_skills_import(args: argparse.Namespace) -> int:
+    records = import_markdown_skills(
+        Path(args.source),
+        names=args.name or None,
+    )
+    if not records:
+        print("No se importaron skills Markdown.")
+        return 1
+    for record in records:
+        print(f"Importada: {record.name} -> {record.path}")
     return 0
 
 
@@ -303,6 +317,11 @@ def build_parser() -> argparse.ArgumentParser:
     s_tools.add_argument("--failure", action="store_true", help="Marca el aprendizaje como fallo")
     s_tools.add_argument("--internal-context", action="store_true", help="Muestra plan interno de reutilizacion/creacion")
     s_tools.set_defaults(func=_cmd_tools)
+
+    s_skills_import = sub.add_parser("skills-import", help="Importa skills Markdown tipo */SKILL.md")
+    s_skills_import.add_argument("source", help="Directorio con carpetas de skills")
+    s_skills_import.add_argument("--name", action="append", default=[], help="Nombre de skill a importar (repetible)")
+    s_skills_import.set_defaults(func=_cmd_skills_import)
 
     s_train = sub.add_parser("auto-train", help="Ejecuta un ciclo de autoaprendizaje en runtime")
     s_train.add_argument("goal", help="Objetivo/tarea de entrenamiento")

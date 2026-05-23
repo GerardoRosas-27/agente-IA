@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -62,6 +63,35 @@ def _ensure_instruction_file(skill_path: Path) -> str:
     return instruction_path.read_text(encoding="utf-8", errors="ignore")
 
 
+def _skill_record_values(skill_path: Path, skills_dir: Path) -> tuple[str, str, str]:
+    """Devuelve (name, rel_path, instructions) para skills Python o SKILL.md."""
+    if skill_path.name == "SKILL.md":
+        name = skill_path.parent.name
+        instructions = skill_path.read_text(encoding="utf-8", errors="ignore")
+    else:
+        name = skill_path.stem
+        instructions = _ensure_instruction_file(skill_path)
+    try:
+        rel_path = skill_path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        try:
+            rel_path = skill_path.relative_to(skills_dir.parent).as_posix()
+        except ValueError:
+            rel_path = skill_path.as_posix()
+    return name, rel_path, instructions
+
+
+def _iter_skill_entries(skills_dir: Path) -> list[Path]:
+    """Lista skills ejecutables locales y skills Markdown tipo upstream/SKILL.md."""
+    entries: list[Path] = []
+    for skill_path in sorted(skills_dir.glob("*.py")):
+        if skill_path.name != "__init__.py":
+            entries.append(skill_path)
+    for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+        entries.append(skill_md)
+    return entries
+
+
 def sync_skills(
     skills_dir: Path = SKILLS_DIR,
     db_path: Path = STATE_DB_PATH,
@@ -72,17 +102,11 @@ def sync_skills(
     now = datetime.now().isoformat(timespec="seconds")
 
     with _connect(db_path) as conn:
-        for skill_path in sorted(skills_dir.glob("*.py")):
-            if skill_path.name == "__init__.py":
-                continue
-            try:
-                rel_path = skill_path.relative_to(REPO_ROOT).as_posix()
-            except ValueError:
-                rel_path = skill_path.as_posix()
-            instructions = _ensure_instruction_file(skill_path)
+        for skill_path in _iter_skill_entries(skills_dir):
+            skill_name, rel_path, instructions = _skill_record_values(skill_path, skills_dir)
             row = conn.execute(
                 "SELECT name FROM skills WHERE name = ?",
-                (skill_path.stem,),
+                (skill_name,),
             ).fetchone()
             if row is None:
                 conn.execute(
@@ -90,7 +114,7 @@ def sync_skills(
                     INSERT INTO skills (name, path, enabled, instructions, updated_at)
                     VALUES (?, ?, 1, ?, ?)
                     """,
-                    (skill_path.stem, rel_path, instructions, now),
+                    (skill_name, rel_path, instructions, now),
                 )
             else:
                 conn.execute(
@@ -99,10 +123,35 @@ def sync_skills(
                     SET path = ?, instructions = ?, updated_at = ?
                     WHERE name = ?
                     """,
-                    (rel_path, instructions, now, skill_path.stem),
+                    (rel_path, instructions, now, skill_name),
                 )
 
     return list_skills(db_path)
+
+
+def import_markdown_skills(
+    source_dir: Path,
+    *,
+    skills_dir: Path = SKILLS_DIR,
+    names: list[str] | None = None,
+    db_path: Path = STATE_DB_PATH,
+) -> list[SkillRecord]:
+    """Importa carpetas `*/SKILL.md` de un pack externo al directorio local de skills."""
+    selected = set(names or [])
+    imported: list[str] = []
+    for source_skill in sorted(source_dir.glob("*/SKILL.md")):
+        name = source_skill.parent.name
+        if selected and name not in selected:
+            continue
+        target_dir = skills_dir / name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_skill, target_dir / "SKILL.md")
+        imported.append(name)
+    records = sync_skills(skills_dir=skills_dir, db_path=db_path)
+    if not imported:
+        return []
+    imported_set = set(imported)
+    return [record for record in records if record.name in imported_set]
 
 
 def list_skills(db_path: Path = STATE_DB_PATH) -> list[SkillRecord]:

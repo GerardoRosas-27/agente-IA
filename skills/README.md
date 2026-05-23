@@ -10,3 +10,7 @@ Para que el sistema pueda usarla correctamente:
 - La interfaz "Administrar Skills" permite activar o desactivar skills sin borrar código.
 
 Si agregas una nueva skill manualmente, crea también su archivo de instrucciones o abre la ventana de administración para que el sistema genere uno básico.
+
+## Skills importadas/adaptadas
+
+- `agent_engineering_workflows`: wrapper local inspirado en `addyosmani/agent-skills` para seleccionar workflows de especificación, planificación, implementación incremental, TDD, debugging, review, seguridad, performance, documentación y lanzamiento.

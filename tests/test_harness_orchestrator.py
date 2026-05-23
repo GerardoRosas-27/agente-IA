@@ -147,6 +147,7 @@ class TestRunOneFeatureCycle(unittest.TestCase):
         self.assertEqual(data["features"][0]["status"], "done")
         self.assertTrue((prog / "impl_demo_feature.md").is_file())
         self.assertTrue((prog / "review_demo_feature.md").is_file())
+        self.assertIn("Quality Gates", (prog / "review_demo_feature.md").read_text(encoding="utf-8"))
 
     def test_adversarial_reviewer_overrides_pass_when_disagrees(self) -> None:
         """E1: si el reviewer principal dice PASS pero el red team dice FAIL,
@@ -215,6 +216,7 @@ class TestRunOneFeatureCycle(unittest.TestCase):
         # 5 failed y exit=1 → debe sobreescribir a FAIL.
         self.assertEqual(res.verdict, False)
         self.assertTrue((prog / "verify_demo_feature.md").is_file())
+        self.assertTrue((prog / "debugging_recovery_demo_feature.md").is_file())
 
 
 if __name__ == "__main__":

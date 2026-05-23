@@ -22,6 +22,7 @@ from typing import Iterable
 
 from harness.static_analysis import LintResult, lint_changed_files
 from harness.test_generator import TestRunResult
+from harness.quality_gates import QualityGate
 
 
 @dataclass(frozen=True)
@@ -194,6 +195,21 @@ def _check_brts(brts: Iterable[TestRunResult]) -> VerifierCheck:
     )
 
 
+def _check_quality_gates(gates: Iterable[QualityGate]) -> list[VerifierCheck]:
+    checks: list[VerifierCheck] = []
+    for gate in gates:
+        checks.append(
+            VerifierCheck(
+                f"quality_gate:{gate.name}",
+                gate.passed,
+                weight=1.0 if gate.hard else 0.4,
+                detail=gate.detail,
+                is_hard=gate.hard,
+            )
+        )
+    return checks
+
+
 def verify_cycle(
     *,
     test_output: str,
@@ -202,6 +218,7 @@ def verify_cycle(
     rejected: Iterable[str] = (),
     bash_ok: bool = True,
     bug_reproduction_runs: Iterable[TestRunResult] = (),
+    quality_gates: Iterable[QualityGate] = (),
     root: Path | None = None,
     run_lint: bool = True,
 ) -> VerifierVerdict:
@@ -226,6 +243,7 @@ def verify_cycle(
         _check_diff_size(changed_list),
         _check_lint(lint),
         _check_brts(bug_reproduction_runs),
+        *_check_quality_gates(quality_gates),
         VerifierCheck(
             "bash_ok",
             bash_ok,

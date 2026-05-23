@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from harness.test_generator import TestRunResult
+from harness.quality_gates import QualityGate
 from harness.verifier import VerifierVerdict, verify_cycle
 
 
@@ -93,3 +94,18 @@ def test_verify_cycle_runs_ruff_when_root_is_provided(tmp_path) -> None:
     else:
         assert not lint_check.passed
         assert verdict.passed is False
+
+
+def test_verify_cycle_blocks_hard_quality_gate() -> None:
+    verdict = verify_cycle(
+        test_output="Exit code: 0\n10 passed",
+        validation_output="py_compile exit=0\nimport ok",
+        changed_files=["skills/demo.py"],
+        quality_gates=[
+            QualityGate("anti_rationalization", False, "detectado: no hace falta test", hard=True)
+        ],
+    )
+
+    assert verdict.passed is False
+    gate = next(c for c in verdict.checks if c.name == "quality_gate:anti_rationalization")
+    assert gate.is_hard is True

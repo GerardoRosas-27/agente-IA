@@ -27,6 +27,10 @@
 | `harness/events.py` | Logging estructurado JSONL en `progress/events.jsonl` (D1) |
 | `harness/mutation_test.py` | Mutation testing por AST para detectar tests fantasma (E2) |
 | **`api_endpoints/whatsapp_hook.py`** | **Maneja la recepción, verificación y parsing de payloads Webhook externos (ej. WhatsApp).** |
+| `harness/workflow_router.py` | Selecciona workflows de ingeniería desde skills estilo `agent-skills` para cada feature |
+| `harness/quality_gates.py` | Gates deterministas por workflow, anti-rationalization y seguridad de límites externos |
+| `harness/review_score.py` | Puntuación de revisión por 5 ejes: correctitud, legibilidad, arquitectura, seguridad y performance |
+| `harness/adr.py` | Generación automática de ADRs para cambios arquitectónicos |
 
 ## Flags opt-in del orquestador
 
@@ -221,5 +225,32 @@ Este aprendizaje se actualiza mediante `record_skill_usage` o el comando:
 ```bash
 python -m harness.cli tools --learn --skill arithmetic_calculator --use-case "calculadora" --instructions "handle_input_command('calc 10 + 5')"
 ```
+
+## Workflows de ingeniería importables (agent-skills)
+
+`harness.skill_registry` soporta tanto skills Python (`skills/*.py` con `.md`
+paralelo) como skills Markdown nativas (`skills/<name>/SKILL.md`). Esto permite
+importar packs externos de procesos, como `addyosmani/agent-skills`, sin
+convertir cada skill en código ejecutable.
+
+El comando:
+
+```bash
+python -m harness.cli skills-import /ruta/al/repo/skills --name test-driven-development
+```
+
+copia skills Markdown seleccionadas al directorio local y las sincroniza en
+SQLite. Para no inflar contexto, el harness también incluye la skill compacta
+`agent_engineering_workflows`, que resume los workflows más útiles.
+
+Durante `run_one_feature_cycle`, el `workflow_router` selecciona workflows para
+la feature activa y emite `workflow.routed`. Luego el revisor recibe:
+
+1. **Quality gates** por workflow.
+2. **Anti-rationalization checks** contra excusas como omitir pruebas.
+3. **Security gates** para `.env`, tokens, webhooks y límites externos.
+4. **Review score** por correctitud, legibilidad, arquitectura, seguridad y
+   performance.
+5. **ADR automático** si el cambio toca módulos o límites arquitectónicos.
 
 ... (Resto del documento) ...
